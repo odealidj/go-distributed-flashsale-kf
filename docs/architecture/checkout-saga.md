@@ -55,7 +55,12 @@ sequenceDiagram
     I->>I: DB: Update Stock (Release Reserved)
 ```
 
-## 3. Aturan Idempotency
-Sangat mungkin Kafka mengirimkan *event* yang sama dua kali.
-- Setiap *consumer* harus mencatat `event_id` yang sudah diproses di sebuah tabel `processed_events`.
-- Sebelum memproses event `PaymentCompletedEvent`, Order Service harus mengecek apakah `event_id` tersebut sudah ada di tabel `processed_events`. Jika sudah, abaikan *event* tersebut (*return success* ke Kafka agar *offset* maju).
+## 3. Aturan Idempotency & Inbox Pattern
+Sangat mungkin Kafka mengirimkan *event* yang sama dua kali (At-Least-Once Delivery).
+- Setiap *consumer* harus mencatat `event_id` yang sudah diproses di sebuah tabel `processed_events` (Inbox Pattern).
+- Sebelum memproses *event* (misal: `PaymentCompletedEvent`), service harus mengecek apakah `event_id` tersebut sudah ada di tabel `processed_events`. Jika sudah, abaikan *event* tersebut (*return success* ke Kafka agar *offset* maju). Pengecekan dan insert harus dilakukan dalam satu transaksi SQL yang sama bersamaan dengan logika bisnis utama.
+
+## 4. Transactional Outbox Pattern & Worker
+Untuk menghindari hilangnya *event* saat mengirim ke Kafka, setiap *publisher* (seperti Inventory atau Payment) menyimpan *event* ke tabel `outbox_messages` terlebih dahulu bersamaan dengan transaksi *database* utama.
+- Sebuah **Goroutine Poller Worker** (sebagai pengganti Debezium untuk environment *scaffold* lokal) akan berjalan di *background* setiap *service* produsen.
+- Worker ini akan membaca baris di `outbox_messages` dengan status `PENDING`, mengirimkannya ke Kafka menggunakan library `franz-go`, lalu meng-*update* statusnya menjadi `SENT`.

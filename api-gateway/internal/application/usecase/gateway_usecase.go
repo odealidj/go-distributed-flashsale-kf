@@ -11,12 +11,14 @@ import (
 type GatewayUsecase struct {
 	productClient   port.ProductServiceClient
 	inventoryClient port.InventoryServiceClient
+	paymentClient   port.PaymentServiceClient
 }
 
-func NewGatewayUsecase(p port.ProductServiceClient, i port.InventoryServiceClient) *GatewayUsecase {
+func NewGatewayUsecase(p port.ProductServiceClient, i port.InventoryServiceClient, pay port.PaymentServiceClient) *GatewayUsecase {
 	return &GatewayUsecase{
 		productClient:   p,
 		inventoryClient: i,
+		paymentClient:   pay,
 	}
 }
 
@@ -33,4 +35,8 @@ func (uc *GatewayUsecase) Checkout(ctx context.Context, userID, productID string
 	success, err := uc.inventoryClient.ReserveStock(ctx, productID, userID, eventID)
 	
 	return eventID, success, err
+}
+
+func (uc *GatewayUsecase) ProcessPayment(ctx context.Context, orderID string, amount int64) (bool, error) {
+	return uc.paymentClient.ProcessPayment(ctx, orderID, amount)
 }

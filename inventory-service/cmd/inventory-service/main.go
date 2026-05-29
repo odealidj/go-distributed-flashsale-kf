@@ -10,6 +10,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
+	"flashsale/shared/pkg/outbox"
 
 	pb "flashsale/proto/inventory/v1"
 )
@@ -56,7 +57,15 @@ func main() {
 	)
 	pb.RegisterInventoryServiceServer(grpcServer, inventoryServer)
 
-	// 5. Jalankan App
+	// 6. Jalankan Outbox Relay Worker di Background
+	relay, err := outbox.NewRelayWorker(db, []string{"localhost:9092"}, logger)
+	if err == nil {
+		go relay.Start(context.Background(), "flashsale.inventory.events")
+	} else {
+		log.Errorf("Failed to start outbox relay: %v", err)
+	}
+
+	// 7. Jalankan App
 	app := kratos.New(
 		kratos.Name("inventory-service"),
 		kratos.Server(

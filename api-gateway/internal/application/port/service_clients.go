@@ -12,3 +12,7 @@ type ProductServiceClient interface {
 type InventoryServiceClient interface {
 	ReserveStock(ctx context.Context, productID, userID, eventID string) (bool, error)
 }
+
+type PaymentServiceClient interface {
+	ProcessPayment(ctx context.Context, orderID string, amount int64) (bool, error)
+}

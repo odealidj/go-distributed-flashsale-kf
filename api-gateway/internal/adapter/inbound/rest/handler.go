@@ -30,6 +30,11 @@ type CheckoutRequest struct {
 	ProductID string `json:"product_id"`
 }
 
+type PayRequest struct {
+	OrderID string `json:"order_id"`
+	Amount  int64  `json:"amount"`
+}
+
 func RegisterHTTPServer(srv *kratoshttp.Server, uc *usecase.GatewayUsecase, logger log.Logger) {
 	log := log.NewHelper(logger)
 
@@ -96,6 +101,26 @@ func RegisterHTTPServer(srv *kratoshttp.Server, uc *usecase.GatewayUsecase, logg
 		// 4. Return Accepted (karena proses order sesungguhnya asynchronous via Kafka)
 		return ctx.JSON(http.StatusAccepted, Response{
 			Meta: Meta{TraceID: eventID, Message: "pesanan sedang diproses"},
+		})
+	})
+
+	srv.Route("/").POST("/api/v1/pay", func(ctx kratoshttp.Context) error {
+		var req PayRequest
+		if err := json.NewDecoder(ctx.Request().Body).Decode(&req); err != nil {
+			return ctx.JSON(http.StatusBadRequest, Response{
+				Meta: Meta{TraceID: "HTTP-TRACE", Message: "bad request"},
+			})
+		}
+
+		success, err := uc.ProcessPayment(ctx, req.OrderID, req.Amount)
+		if err != nil || !success {
+			return ctx.JSON(http.StatusInternalServerError, Response{
+				Meta: Meta{TraceID: "HTTP-TRACE", Message: "payment failed"},
+			})
+		}
+
+		return ctx.JSON(http.StatusOK, Response{
+			Meta: Meta{TraceID: "HTTP-TRACE", Message: "payment success"},
 		})
 	})
 }
