@@ -6,5 +6,6 @@ use (
 	./order-service
 	./payment-service
 	./product-service
+	./proto
 	./shared
 )
