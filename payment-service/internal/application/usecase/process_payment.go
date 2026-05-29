@@ -21,20 +21,36 @@ func (uc *ProcessPaymentUsecase) Execute(ctx context.Context, orderID string, am
 		ID:      uuid.New().String(),
 		OrderID: orderID,
 		Amount:  amount,
-		Status:  "SUCCESS", // Scaffold: asumsikan selalu sukses
 	}
 
-	event := &model.PaymentCompletedEvent{
-		EventID: uuid.New().String(),
-		OrderID: payment.OrderID,
-		Amount:  payment.Amount,
+	var event interface{}
+	var eventType string
+
+	// Simulasi payment gagal jika amount berakhiran angka 4
+	if amount%10 == 4 {
+		payment.Status = "FAILED"
+		eventType = "PaymentFailedEvent"
+		event = &model.PaymentFailedEvent{
+			EventID: uuid.New().String(),
+			OrderID: payment.OrderID,
+			Amount:  payment.Amount,
+			Reason:  "Payment declined by bank",
+		}
+	} else {
+		payment.Status = "SUCCESS"
+		eventType = "PaymentCompletedEvent"
+		event = &model.PaymentCompletedEvent{
+			EventID: uuid.New().String(),
+			OrderID: payment.OrderID,
+			Amount:  payment.Amount,
+		}
 	}
 
 	// Simpan ke DB dan catat ke Outbox secara atomik
-	err := uc.repo.SavePaymentAndEmitEvent(ctx, payment, event)
+	err := uc.repo.SavePaymentAndEmitEvent(ctx, payment, eventType, event)
 	if err != nil {
 		return false, err
 	}
 
-	return true, nil
+	return payment.Status == "SUCCESS", nil
 }

@@ -7,5 +7,5 @@ import (
 )
 
 type PaymentRepository interface {
-	SavePaymentAndEmitEvent(ctx context.Context, payment *model.Payment, event *model.PaymentCompletedEvent) error
+	SavePaymentAndEmitEvent(ctx context.Context, payment *model.Payment, eventType string, event interface{}) error
 }

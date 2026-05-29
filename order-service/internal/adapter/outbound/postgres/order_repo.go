@@ -2,12 +2,14 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/go-kratos/kratos/v2/log"
 
 	"flashsale/order-service/internal/application/port"
 	"flashsale/order-service/internal/domain/model"
+	"flashsale/shared/pkg/telemetry"
 )
 
 type orderRepository struct {
@@ -91,4 +93,53 @@ func (r *orderRepository) UpdateOrderStatusIdempotent(ctx context.Context, order
 
 	r.logger.Infof("Order %s status updated to %s for event %s", orderID, status, eventID)
 	return true, tx.Commit()
+}
+
+func (r *orderRepository) GetOrder(ctx context.Context, orderID string) (*model.Order, error) {
+	var order model.Order
+	err := r.db.GetContext(ctx, &order, "SELECT id, user_id, product_id, quantity, total_amount, status, created_at, updated_at FROM orders WHERE id = $1", orderID)
+	if err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
+func (r *orderRepository) CancelOrderAndEmitEvent(ctx context.Context, order *model.Order, event *model.OrderCancelledEvent) error {
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 1. Cek Idempotency (optional, but good if triggered by an event. Here eventID from event itself)
+	var exists bool
+	err = tx.GetContext(ctx, &exists, "SELECT EXISTS(SELECT 1 FROM processed_events WHERE event_id=$1)", event.EventID)
+	if err != nil {
+		return err
+	}
+	if exists {
+		r.logger.Infof("Cancel event %s already processed. Skipping cancel.", event.EventID)
+		return nil
+	}
+
+	// 2. Update Order
+	_, err = tx.ExecContext(ctx, "UPDATE orders SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = 'PENDING'", order.ID)
+	if err != nil {
+		return err
+	}
+
+	// 3. Simpan Outbox Event
+	payloadBytes, _ := json.Marshal(event)
+	tracePayload := telemetry.ExtractTraceparent(ctx)
+	
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO outbox_messages (aggregate_id, aggregate_type, event_type, payload, trace_payload, status)
+		VALUES ($1, $2, $3, $4, $5, 'PENDING')
+	`, order.ID, "order", "OrderCancelledEvent", string(payloadBytes), tracePayload)
+	if err != nil {
+		return err
+	}
+
+	r.logger.Infof("Order %s cancelled and OrderCancelledEvent emitted", order.ID)
+	return tx.Commit()
 }

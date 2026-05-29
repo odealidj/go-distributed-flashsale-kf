@@ -15,3 +15,10 @@ type PaymentCompletedEvent struct {
 	OrderID string `json:"order_id"`
 	Amount  int64  `json:"amount"`
 }
+
+type PaymentFailedEvent struct {
+	EventID string `json:"event_id"`
+	OrderID string `json:"order_id"`
+	Amount  int64  `json:"amount"`
+	Reason  string `json:"reason"`
+}

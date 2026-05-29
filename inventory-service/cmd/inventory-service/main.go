@@ -14,6 +14,8 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 
+	"flashsale/inventory-service/internal/adapter/inbound/kafka"
+	redistore "flashsale/inventory-service/internal/adapter/outbound/redis"
 	pb "flashsale/proto/inventory/v1"
 )
 
@@ -73,6 +75,14 @@ func main() {
 	} else {
 		log.Errorf("Failed to start outbox relay: %v", err)
 	}
+
+	// 6.5. Jalankan Kafka Consumer
+	redisPort := redistore.NewRedisPort(rdb)
+	consumer, err := kafka.NewKafkaConsumer([]string{"localhost:9092"}, "inventory-service-group", redisPort, logger)
+	if err != nil {
+		panic(err)
+	}
+	go consumer.Start(context.Background())
 
 	// 7. Jalankan App
 	app := kratos.New(

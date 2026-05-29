@@ -14,6 +14,7 @@ import (
 	"flashsale/order-service/internal/adapter/inbound/kafka"
 	"flashsale/order-service/internal/adapter/outbound/postgres"
 	"flashsale/order-service/internal/application/usecase"
+	"flashsale/order-service/internal/application/worker"
 )
 
 func main() {
@@ -50,11 +51,14 @@ func main() {
 		panic(err)
 	}
 
-	// 3. Jalankan Kafka Consumer
+	// 3. Jalankan Kafka Consumer & Timeout Worker
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	timeoutWorker := worker.NewTimeoutWorker(db, repo, logger)
+
 	go consumer.Start(ctx)
+	go timeoutWorker.Start(ctx)
 
 	// 4. Wait for interrupt signal to gracefully shutdown
 	c := make(chan os.Signal, 1)

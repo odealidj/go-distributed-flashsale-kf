@@ -18,7 +18,7 @@ func NewPaymentRepository(db *sqlx.DB) port.PaymentRepository {
 	return &paymentRepository{db: db}
 }
 
-func (r *paymentRepository) SavePaymentAndEmitEvent(ctx context.Context, payment *model.Payment, event *model.PaymentCompletedEvent) error {
+func (r *paymentRepository) SavePaymentAndEmitEvent(ctx context.Context, payment *model.Payment, eventType string, event interface{}) error {
 	tx, err := r.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
@@ -40,7 +40,7 @@ func (r *paymentRepository) SavePaymentAndEmitEvent(ctx context.Context, payment
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO outbox_messages (aggregate_id, aggregate_type, event_type, payload, trace_payload, status)
 		VALUES ($1, $2, $3, $4, $5, 'PENDING')
-	`, payment.OrderID, "order", "PaymentCompletedEvent", string(payloadBytes), tracePayload)
+	`, payment.OrderID, "order", eventType, string(payloadBytes), tracePayload)
 	if err != nil {
 		return err
 	}

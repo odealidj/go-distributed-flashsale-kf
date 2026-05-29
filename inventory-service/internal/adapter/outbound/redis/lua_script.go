@@ -16,36 +16,48 @@ func NewRedisPort(client *redis.Client) port.RedisPort {
 	return &redisPort{client: client}
 }
 
-// ReserveStock mengeksekusi Lua Script.
-// KEYS[1] = "stock:{product_id}" (Menyimpan jumlah stok)
-// KEYS[2] = "reserve_idemp:{event_id}" (Mencegah idempotency, double reserve)
-// ARGV[1] = 1 (Jumlah yang dikurangi)
-//
-// Return 1 jika sukses, 0 jika gagal (stok habis atau sudah pernah di-reserve).
-var reserveLuaScript = redis.NewScript(`
-	local stock_key = KEYS[1]
-	local idemp_key = KEYS[2]
-	local amount = tonumber(ARGV[1])
+// ReserveStockScript digunakan untuk mengecek stok, mengurangi stok,
+// dan menyimpan event_id (idempotency_key) secara atomic dalam 1 operasi Redis.
+const ReserveStockScript = `
+local stock_key = KEYS[1]
+local idemp_key = KEYS[2]
+local amount = tonumber(ARGV[1])
 
-	-- Cek Idempotency
-	local is_reserved = redis.call("EXISTS", idemp_key)
-	if is_reserved == 1 then
-		return 0 -- Gagal, sudah pernah di-reserve
-	end
+-- Cek Idempotency
+if redis.call("EXISTS", idemp_key) == 1 then
+    return 1 -- Sudah pernah diproses, return success
+end
 
-	-- Cek Stok
-	local current_stock = tonumber(redis.call("GET", stock_key))
-	if current_stock == nil or current_stock < amount then
-		return 0 -- Gagal, stok tidak cukup
-	end
+-- Cek Stok
+local current_stock = tonumber(redis.call("GET", stock_key))
+if current_stock == nil or current_stock < amount then
+    return 0 -- Stok habis atau tidak cukup
+end
 
-	-- Potong Stok
-	redis.call("DECRBY", stock_key, amount)
-	-- Tandai Idempotency (set expired misal 1 jam)
-	redis.call("SET", idemp_key, "1", "EX", 3600)
+-- Potong Stok
+redis.call("DECRBY", stock_key, amount)
+-- Simpan idempotency key (expire 1 jam cukup)
+redis.call("SET", idemp_key, "1", "EX", 3600)
 
-	return 1 -- Sukses
-`)
+return 1
+`
+
+// RefundStockScript digunakan untuk mengembalikan stok (saat order dibatalkan)
+// dan menghapus idempotency_key secara atomic dalam 1 operasi Redis.
+const RefundStockScript = `
+local stock_key = KEYS[1]
+local idemp_key = KEYS[2]
+local amount = tonumber(ARGV[1])
+
+-- Kembalikan Stok
+redis.call("INCRBY", stock_key, amount)
+-- Hapus idempotency_key agar user bisa beli lagi kalau mau
+redis.call("DEL", idemp_key)
+
+return 1
+`
+
+var reserveLuaScript = redis.NewScript(ReserveStockScript)
 
 func (r *redisPort) ReserveStock(ctx context.Context, productID string, eventID string) (bool, error) {
 	stockKey := fmt.Sprintf("stock:%s", productID)
@@ -57,6 +69,23 @@ func (r *redisPort) ReserveStock(ctx context.Context, productID string, eventID 
 			return false, nil // Script error atau key tidak ada
 		}
 		return false, err // Koneksi putus
+	}
+
+	return res == 1, nil
+}
+
+var refundLuaScript = redis.NewScript(RefundStockScript)
+
+func (r *redisPort) RefundStock(ctx context.Context, productID string, eventID string, quantity int) (bool, error) {
+	stockKey := fmt.Sprintf("stock:%s", productID)
+	idempKey := fmt.Sprintf("reserve_idemp:%s", eventID)
+
+	res, err := refundLuaScript.Run(ctx, r.client, []string{stockKey, idempKey}, quantity).Int()
+	if err != nil {
+		if err == redis.Nil {
+			return false, nil
+		}
+		return false, err
 	}
 
 	return res == 1, nil

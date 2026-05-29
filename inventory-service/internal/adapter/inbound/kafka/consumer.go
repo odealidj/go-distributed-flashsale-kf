@@ -10,38 +10,35 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 	"go.opentelemetry.io/otel"
 
-	"flashsale/order-service/internal/application/usecase"
-	"flashsale/order-service/internal/domain/model"
+	"flashsale/inventory-service/internal/application/port"
 	"flashsale/shared/pkg/resilience"
 	"flashsale/shared/pkg/telemetry"
 )
 
-// dlqTopic adalah topic Dead Letter Queue.
-// Pesan yang gagal diproses setelah max retry dikirim ke sini untuk
-// diinspeksi manual (tidak dibuang begitu saja).
-const dlqTopic = "flashsale.order.dlq"
+const dlqTopic = "flashsale.inventory.dlq"
 
-// Consumer adalah Kafka consumer untuk Order Service.
-// Mendengarkan event dari Inventory dan Payment, lalu menjalankan Saga.
+// OrderCancelledEvent mencocokkan struktur dari Order Service
+type OrderCancelledEvent struct {
+	EventID   string `json:"event_id"`
+	OrderID   string `json:"order_id"`
+	ProductID string `json:"product_id"`
+	Quantity  int    `json:"quantity"`
+	Reason    string `json:"reason"`
+}
+
 type Consumer struct {
 	client    *kgo.Client
-	dlqClient *kgo.Client // Client terpisah untuk DLQ agar tidak tercampur
-	usecase   *usecase.OrderSagaUsecase
+	dlqClient *kgo.Client
+	redisPort port.RedisPort
 	logger    *log.Helper
 	retry     resilience.RetryConfig
 }
 
-// NewKafkaConsumer membuat Consumer baru dengan:
-//   - Koneksi ke Kafka dengan auto-commit dinonaktifkan (manual commit untuk at-least-once semantik)
-//   - DLQ client terpisah untuk mengirim pesan gagal
-//   - Retry config untuk pemrosesan yang gagal transient
-func NewKafkaConsumer(brokers []string, groupID string, uc *usecase.OrderSagaUsecase, logger log.Logger) (*Consumer, error) {
+func NewKafkaConsumer(brokers []string, groupID string, redisPort port.RedisPort, logger log.Logger) (*Consumer, error) {
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(brokers...),
 		kgo.ConsumerGroup(groupID),
-		kgo.ConsumeTopics("flashsale.inventory.events", "flashsale.payment.events"),
-		// DisableAutoCommit agar kita kontrol kapan offset di-commit
-		// (hanya setelah pemrosesan sukses atau setelah dikirim ke DLQ)
+		kgo.ConsumeTopics("flashsale.order.events"),
 		kgo.DisableAutoCommit(),
 	)
 	if err != nil {
@@ -60,9 +57,8 @@ func NewKafkaConsumer(brokers []string, groupID string, uc *usecase.OrderSagaUse
 	return &Consumer{
 		client:    cl,
 		dlqClient: dlqCl,
-		usecase:   uc,
+		redisPort: redisPort,
 		logger:    log.NewHelper(logger),
-		// Retry 3x dengan backoff untuk kegagalan transient (misal: DB sementara down)
 		retry: resilience.RetryConfig{
 			MaxAttempts:     3,
 			InitialInterval: 500 * time.Millisecond,
@@ -73,16 +69,15 @@ func NewKafkaConsumer(brokers []string, groupID string, uc *usecase.OrderSagaUse
 	}, nil
 }
 
-// Start menjalankan consumer loop hingga ctx dibatalkan.
 func (c *Consumer) Start(ctx context.Context) {
-	c.logger.Info("Order Service Kafka Consumer dimulai")
+	c.logger.Info("Inventory Service Kafka Consumer dimulai")
 	defer c.client.Close()
 	defer c.dlqClient.Close()
 
 	for {
 		select {
 		case <-ctx.Done():
-			c.logger.Info("Order Service Kafka Consumer dihentikan")
+			c.logger.Info("Inventory Service Kafka Consumer dihentikan")
 			return
 		default:
 			fetches := c.client.PollFetches(ctx)
@@ -98,7 +93,6 @@ func (c *Consumer) Start(ctx context.Context) {
 				c.processRecord(ctx, record)
 			})
 
-			// Commit offset hanya setelah semua record dalam batch diproses
 			if err := c.client.CommitUncommittedOffsets(ctx); err != nil {
 				c.logger.Errorf("Gagal commit offset Kafka: %v", err)
 			}
@@ -106,9 +100,7 @@ func (c *Consumer) Start(ctx context.Context) {
 	}
 }
 
-// processRecord memproses satu record Kafka dengan retry + DLQ fallback.
 func (c *Consumer) processRecord(ctx context.Context, record *kgo.Record) {
-	// Ekstrak trace context dari Kafka header
 	var traceparent string
 	for _, h := range record.Headers {
 		if h.Key == "traceparent" {
@@ -118,10 +110,9 @@ func (c *Consumer) processRecord(ctx context.Context, record *kgo.Record) {
 	}
 
 	ctxWithTrace := telemetry.InjectTraceparent(ctx, traceparent)
-	ctxWithTrace, span := otel.Tracer("order-service-consumer").Start(ctxWithTrace, "ConsumeEvent "+record.Topic)
+	ctxWithTrace, span := otel.Tracer("inventory-service-consumer").Start(ctxWithTrace, "ConsumeEvent "+record.Topic)
 	defer span.End()
 
-	// Coba proses dengan retry
 	processErr := resilience.DoWithRetry(ctxWithTrace, c.retry, func(attempt int) error {
 		if attempt > 1 {
 			c.logger.Warnf("Retry proses event topic=%s offset=%d (attempt=%d)",
@@ -131,54 +122,57 @@ func (c *Consumer) processRecord(ctx context.Context, record *kgo.Record) {
 	})
 
 	if processErr != nil {
-		// Kirim ke DLQ — pesan tidak hilang, bisa diinspeksi dan di-replay manual
 		c.logger.Errorf("Event gagal setelah semua retry, dikirim ke DLQ: topic=%s offset=%d err=%v",
 			record.Topic, record.Offset, processErr)
 		c.sendToDLQ(ctx, record, processErr)
 	}
 }
 
-// dispatch merutekan event ke handler yang tepat berdasarkan topic.
 func (c *Consumer) dispatch(ctx context.Context, record *kgo.Record) error {
 	switch record.Topic {
-	case "flashsale.inventory.events":
-		var event model.StockReservedEvent
-		if err := json.Unmarshal(record.Value, &event); err != nil {
-			// Payload tidak valid = permanent error, jangan retry
-			return fmt.Errorf("payload StockReservedEvent tidak valid (permanent): %w", err)
-		}
-		return c.usecase.HandleStockReserved(ctx, &event)
-
-	case "flashsale.payment.events":
-		// Karena payment service bisa kirim sukses atau gagal dalam topic yang sama, kita perlu cek isinya.
-		// Cara yang lebih robust adalah dengan menggunakan CloudEvents atau menaruh tipe event di Header.
-		// Namun untuk kesederhanaan, kita coba unmarshal ke struct map untuk cek tipe event.
+	case "flashsale.order.events":
+		// Cek tipe payload, karena topic ini mungkin berisi tipe event lain.
 		var raw map[string]interface{}
 		if err := json.Unmarshal(record.Value, &raw); err != nil {
-			return fmt.Errorf("payload payment events tidak valid (permanent): %w", err)
+			return fmt.Errorf("payload invalid (permanent): %w", err)
 		}
 
 		if reason, hasReason := raw["reason"]; hasReason && reason != "" {
-			var event model.PaymentFailedEvent
+			var event OrderCancelledEvent
 			if err := json.Unmarshal(record.Value, &event); err != nil {
-				return fmt.Errorf("payload PaymentFailedEvent tidak valid (permanent): %w", err)
+				return fmt.Errorf("payload OrderCancelledEvent tidak valid (permanent): %w", err)
 			}
-			return c.usecase.HandlePaymentFailed(ctx, &event)
-		} else {
-			var event model.PaymentCompletedEvent
-			if err := json.Unmarshal(record.Value, &event); err != nil {
-				return fmt.Errorf("payload PaymentCompletedEvent tidak valid (permanent): %w", err)
-			}
-			return c.usecase.HandlePaymentCompleted(ctx, &event)
+			return c.handleOrderCancelled(ctx, &event)
 		}
-
+		
+		// Event selain OrderCancelledEvent (misal OrderCreatedEvent) diabaikan oleh inventory.
+		return nil
 	default:
 		return fmt.Errorf("topic tidak dikenal: %s (permanent)", record.Topic)
 	}
 }
 
-// sendToDLQ mengirim record yang gagal ke Dead Letter Queue topic.
-// DLQ record menyertakan metadata: original topic, error message, dan timestamp.
+func (c *Consumer) handleOrderCancelled(ctx context.Context, event *OrderCancelledEvent) error {
+	// Refund stock ke Redis
+	// Idempotency diselesaikan di dalam Lua script
+	success, err := c.redisPort.RefundStock(ctx, event.ProductID, event.EventID, event.Quantity)
+	if err != nil {
+		return fmt.Errorf("gagal refund stok ke Redis: %w", err)
+	}
+
+	if !success {
+		// Log saja, karena mungkin stock_key sudah expire (selesai masa promo)
+		// Namun ini bukan error yang butuh DLQ
+		c.logger.Warnf("RefundStock me-return false (kemungkinan idempotency key tidak ditemukan atau promosi selesai). OrderID: %s", event.OrderID)
+	} else {
+		c.logger.Infof("Stok berhasil direfund untuk product_id=%s, order_id=%s", event.ProductID, event.OrderID)
+	}
+
+	// TODO: Idealnya mengembalikan stok juga ke PostgreSQL inventory database jika kita memaintainnya secara sinkron.
+	// Tetapi dalam arsitektur Flash Sale, Source of Truth utama saat event berlangsung adalah Redis.
+	return nil
+}
+
 func (c *Consumer) sendToDLQ(ctx context.Context, original *kgo.Record, reason error) {
 	dlqRecord := &kgo.Record{
 		Topic: dlqTopic,
@@ -192,7 +186,6 @@ func (c *Consumer) sendToDLQ(ctx context.Context, original *kgo.Record, reason e
 	}
 
 	if err := c.dlqClient.ProduceSync(ctx, dlqRecord).FirstErr(); err != nil {
-		// Jika DLQ sendiri gagal, log sebagai CRITICAL — butuh intervensi manual
 		c.logger.Errorf("CRITICAL: Gagal kirim ke DLQ! topic=%s offset=%d err=%v",
 			original.Topic, original.Offset, err)
 	} else {

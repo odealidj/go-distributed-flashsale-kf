@@ -36,3 +36,21 @@ func (uc *OrderSagaUsecase) HandlePaymentCompleted(ctx context.Context, event *m
 	_, err := uc.repo.UpdateOrderStatusIdempotent(ctx, event.OrderID, "PAID", event.EventID)
 	return err
 }
+
+// HandlePaymentFailed dipanggil saat ada event PaymentFailedEvent dari Kafka
+func (uc *OrderSagaUsecase) HandlePaymentFailed(ctx context.Context, event *model.PaymentFailedEvent) error {
+	order, err := uc.repo.GetOrder(ctx, event.OrderID)
+	if err != nil {
+		return err
+	}
+
+	cancelEvent := &model.OrderCancelledEvent{
+		EventID:   event.EventID, // Gunakan eventID dari payment failed sebagai idempotency key
+		OrderID:   order.ID,
+		ProductID: order.ProductID,
+		Quantity:  order.Quantity,
+		Reason:    event.Reason,
+	}
+
+	return uc.repo.CancelOrderAndEmitEvent(ctx, order, cancelEvent)
+}
