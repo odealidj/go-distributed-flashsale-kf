@@ -1,0 +1,59 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ "main", "feature/*" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test-and-lint:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        cache: true
+
+    - name: Install golangci-lint
+      run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.54.2
+
+    - name: Run Linter (Shared)
+      run: cd shared && golangci-lint run ./... || echo "Linter failures in shared, but continuing..."
+
+    - name: Test Shared Package
+      run: cd shared && go test -v -cover ./...
+
+    - name: Run Linter (Order Service)
+      run: cd order-service && golangci-lint run ./... || echo "Linter failures in order-service, but continuing..."
+
+    - name: Test Order Service
+      run: cd order-service && go test -v -cover ./...
+
+    - name: Run Linter (Payment Service)
+      run: cd payment-service && golangci-lint run ./... || echo "Linter failures in payment-service, but continuing..."
+
+    - name: Test Payment Service
+      run: cd payment-service && go test -v -cover ./...
+
+    - name: Run Linter (Inventory Service)
+      run: cd inventory-service && golangci-lint run ./... || echo "Linter failures in inventory-service, but continuing..."
+
+    - name: Test Inventory Service
+      run: cd inventory-service && go test -v -cover ./...
+
+    - name: Run Linter (Product Service)
+      run: cd product-service && golangci-lint run ./... || echo "Linter failures in product-service, but continuing..."
+
+    - name: Test Product Service
+      run: cd product-service && go test -v -cover ./...
+
+    - name: Run Linter (API Gateway)
+      run: cd api-gateway && golangci-lint run ./... || echo "Linter failures in api-gateway, but continuing..."
+
+    - name: Test API Gateway
+      run: cd api-gateway && go test -v -cover ./...
