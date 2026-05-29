@@ -65,10 +65,10 @@ Proyek ini telah dilengkapi dengan sederet *shortcut* `make` untuk mempermudah e
 
 | Dokumen | Deskripsi |
 |---|---|
-| [`docc-referensi/architecture/system-architecture.md`](docc-referensi/architecture/system-architecture.md) | Penjelasan Arsitektur Hexagonal & C4 Model |
-| [`docc-referensi/architecture/checkout-saga.md`](docc-referensi/architecture/checkout-saga.md) | Diagram Alur Transaksi Saga |
-| [`docc-referensi/api/openapi.yaml`](docc-referensi/api/openapi.yaml) | Dokumentasi API Endpoint |
-| [`docc-referensi/adr/`](docc-referensi/adr/) | Architecture Decision Records (ADRs) Log |
+| [`docs/architecture/system-architecture.md`](docs/architecture/system-architecture.md) | Penjelasan Arsitektur Hexagonal & C4 Model |
+| [`docs/architecture/checkout-saga.md`](docs/architecture/checkout-saga.md) | Diagram Alur Transaksi Saga |
+| [`docs/api/openapi.yaml`](docs/api/openapi.yaml) | Dokumentasi API Endpoint |
+| [`docs/adr/`](docs/adr/) | Architecture Decision Records (ADRs) Log |
 | [`performance-tests/README.md`](performance-tests/README.md) | Panduan Pengujian Kinerja |
 
 ---
