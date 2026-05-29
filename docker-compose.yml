@@ -97,6 +97,22 @@ services:
     networks:
       - flashsale_net
 
+  # ----------------------------------------------------
+  # 6. REVERSE PROXY / API GATEWAY FRONTEND (NGINX)
+  # ----------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    container_name: flashsale-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    # Membutuhkan host.docker.internal untuk bisa proxy ke aplikasi Go yang running di localhost host OS
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - flashsale_net
+
 volumes:
   pgdata:
   kafkadata:
