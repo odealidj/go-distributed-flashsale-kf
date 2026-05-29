@@ -1,0 +1,107 @@
+asyncapi: 3.0.0
+info:
+  title: Flash Sale Event Contracts
+  version: 1.0.0
+  description: Definisi event Kafka untuk Saga Choreography Flash Sale.
+servers:
+  development:
+    host: localhost:9092
+    protocol: kafka
+channels:
+  flashsale.inventory.events:
+    address: flashsale.inventory.events
+    messages:
+      StockReservedEvent:
+        $ref: '#/components/messages/StockReservedEvent'
+  flashsale.payment.events:
+    address: flashsale.payment.events
+    messages:
+      PaymentCompletedEvent:
+        $ref: '#/components/messages/PaymentCompletedEvent'
+      PaymentFailedEvent:
+        $ref: '#/components/messages/PaymentFailedEvent'
+  flashsale.order.events:
+    address: flashsale.order.events
+    messages:
+      OrderCancelledEvent:
+        $ref: '#/components/messages/OrderCancelledEvent'
+components:
+  messages:
+    StockReservedEvent:
+      name: StockReservedEvent
+      title: Stock Reserved Event
+      summary: Diterbitkan oleh Inventory saat berhasil mengunci stok di Redis.
+      payload:
+        type: object
+        required:
+          - event_id
+          - user_id
+          - product_id
+          - quantity
+          - price
+        properties:
+          event_id:
+            type: string
+            description: UUID event, digunakan sebagai Idempotency Key di Order Service.
+          user_id:
+            type: string
+          product_id:
+            type: string
+          quantity:
+            type: integer
+          price:
+            type: integer
+    PaymentCompletedEvent:
+      name: PaymentCompletedEvent
+      title: Payment Completed Event
+      summary: Diterbitkan oleh Payment saat pembayaran sukses.
+      payload:
+        type: object
+        required:
+          - event_id
+          - order_id
+          - amount
+        properties:
+          event_id:
+            type: string
+          order_id:
+            type: string
+          amount:
+            type: integer
+    PaymentFailedEvent:
+      name: PaymentFailedEvent
+      title: Payment Failed Event
+      summary: Diterbitkan oleh Payment saat webhook dari bank mengabarkan kegagalan.
+      payload:
+        type: object
+        required:
+          - event_id
+          - order_id
+          - reason
+        properties:
+          event_id:
+            type: string
+          order_id:
+            type: string
+          reason:
+            type: string
+    OrderCancelledEvent:
+      name: OrderCancelledEvent
+      title: Order Cancelled Event
+      summary: Diterbitkan oleh Order jika pembayaran tidak dilakukan dalam 15 menit. Inventory wajib mendengar ini untuk merilis stok.
+      payload:
+        type: object
+        required:
+          - event_id
+          - order_id
+          - product_id
+          - quantity
+        properties:
+          event_id:
+            type: string
+          order_id:
+            type: string
+          product_id:
+            type: string
+          quantity:
+            type: integer

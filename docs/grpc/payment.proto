@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package payment.v1;
+
+option go_package = "flashsale/internal/core/port/grpc/payment/v1";
+
+service PaymentService {
+  rpc ProcessPayment (ProcessPaymentRequest) returns (ProcessPaymentResponse);
+}
+
+message ProcessPaymentRequest {
+  string order_id = 1;
+  string user_id = 2;
+  double amount = 3;
+}
+
+message ProcessPaymentResponse {
+  bool success = 1;
+  string payment_id = 2;
+}

@@ -1,0 +1,27 @@
+# Spesifikasi Aturan Bisnis (Machine Readable)
+# Ini dapat dibaca oleh linter atau generator AI.
+business_rules:
+  - id: BR-001
+    name: No Overselling
+    description: "Total stok yang berhasil dipesan (Status = PENDING_PAYMENT, PAID) ditambah stok tersedia harus sama dengan jumlah stok awal. Stok tidak boleh < 0."
+    level: critical
+    domain: inventory
+
+  - id: BR-002
+    name: 1 Item Per User
+    description: "Seorang pengguna (user_id) hanya dapat memiliki maksimal 1 entri pada set pemesanan per flash sale."
+    level: high
+    domain: order
+
+  - id: BR-003
+    name: Payment Timeout
+    description: "Jika pesanan dengan status PENDING_PAYMENT tidak diubah menjadi PAID dalam waktu tepat 15 menit, pesanan harus diubah menjadi CANCELLED dan stok harus di-release."
+    level: high
+    domain: order, inventory
+    timeout_seconds: 900
+
+  - id: BR-004
+    name: Idempotency Key Required
+    description: "Setiap request pemotongan stok (API/gRPC) maupun kafka event processing harus membawa X-Idempotency-Key untuk mencegah pemrosesan ganda."
+    level: critical
+    domain: system

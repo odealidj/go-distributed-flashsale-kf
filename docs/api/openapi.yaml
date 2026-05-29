@@ -1,0 +1,136 @@
+openapi: 3.0.3
+info:
+  title: Flash Sale API Gateway
+  version: 1.0.0
+  description: Public REST API for Client/Mobile App to interact with the Flash Sale system.
+
+paths:
+  /api/v1/flashsale/products:
+    get:
+      summary: Mendapatkan daftar produk flash sale dan sisa stok
+      operationId: GetProducts
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    product_id: { type: string }
+                    name: { type: string }
+                    remaining_stock: { type: integer }
+
+  /api/v1/flashsale/checkout:
+    post:
+      summary: Memulai proses checkout (reserve stock)
+      operationId: CheckoutFlashSale
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: header
+          name: X-Idempotency-Key
+          schema:
+            type: string
+            format: uuid
+          required: true
+          description: UUID unik untuk mencegah checkout ganda oleh device lambat.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_id, qty]
+              properties:
+                product_id:
+                  type: string
+                  example: "PROD-99"
+                qty:
+                  type: integer
+                  example: 1
+      responses:
+        '202':
+          description: "Accepted. Stok berhasil di-reserve di Redis, pesanan sedang diproses asinkron."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Pesanan sedang diproses."
+                  order_id:
+                    type: string
+                    description: "Order ID sementara untuk dilakukan polling."
+        '400':
+          description: Bad Request (Format salah, qty melebihi batas).
+        '401':
+          description: Unauthorized (Token tidak valid).
+        '409':
+          description: Conflict (Stok Habis / User sudah membeli).
+
+  /api/v1/flashsale/orders/{order_id}:
+    get:
+      summary: Mendapatkan status pesanan (Polling)
+      operationId: GetOrder
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: order_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order_id: { type: string }
+                  status: { type: string, example: "PENDING_PAYMENT" }
+                  total_amount: { type: number }
+        '404':
+          description: Pesanan belum ada di database (Saga belum selesai membuat draft).
+
+  /api/v1/flashsale/pay:
+    post:
+      summary: Mock Pembayaran
+      operationId: MockPayment
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, amount]
+              properties:
+                order_id:
+                  type: string
+                amount:
+                  type: number
+      responses:
+        '200':
+          description: Pembayaran berhasil diproses
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

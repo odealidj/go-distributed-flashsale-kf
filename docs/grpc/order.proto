@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package order.v1;
+
+option go_package = "flashsale/internal/core/port/grpc/order/v1";
+
+service OrderService {
+  // Endpoint untuk mengambil detail pesanan (untuk polling UI)
+  rpc GetOrder (GetOrderRequest) returns (GetOrderResponse);
+}
+
+message GetOrderRequest {
+  string order_id = 1;
+}
+
+message GetOrderResponse {
+  string order_id = 1;
+  string status = 2; // PENDING_PAYMENT, PAID, CANCELLED
+  double total_amount = 3;
+}

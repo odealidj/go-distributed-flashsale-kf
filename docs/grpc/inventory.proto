@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package inventory.v1;
+
+option go_package = "flashsale/internal/core/port/grpc/inventory/v1";
+
+service InventoryService {
+  // Dipanggil oleh Gateway secara sinkron untuk memvalidasi dan memotong stok di Redis.
+  // Kecepatannya harus < 10ms.
+  rpc ReserveStock (ReserveStockRequest) returns (ReserveStockResponse);
+  
+  // (Opsional) Cek ketersediaan tanpa memotong
+  rpc CheckStock (CheckStockRequest) returns (CheckStockResponse);
+}
+
+message ReserveStockRequest {
+  string product_id = 1;
+  string user_id = 2;
+  int32 qty = 3;
+}
+
+message ReserveStockResponse {
+  bool success = 1;
+  string message = 2; // e.g. "Stock out", "Already bought"
+  int32 remaining_stock = 3;
+}
+
+message CheckStockRequest {
+  string product_id = 1;
+}
+
+message CheckStockResponse {
+  int32 remaining_stock = 1;
+}
