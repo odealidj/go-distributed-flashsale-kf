@@ -2,9 +2,10 @@ package grpc
 
 import (
 	"context"
+	"errors"
 
-	"flashsale/payment-service/internal/application/usecase"
 	pb "flashsale/proto/payment/v1"
+	"flashsale/payment-service/internal/application/usecase"
 )
 
 type PaymentServer struct {
@@ -13,30 +14,22 @@ type PaymentServer struct {
 }
 
 func NewPaymentServer(uc *usecase.ProcessPaymentUsecase) *PaymentServer {
-	return &PaymentServer{usecase: uc}
+	return &PaymentServer{
+		usecase: uc,
+	}
 }
 
 func (s *PaymentServer) ProcessPayment(ctx context.Context, req *pb.ProcessPaymentRequest) (*pb.ProcessPaymentResponse, error) {
 	success, err := s.usecase.Execute(ctx, req.GetOrderId(), req.GetAmount())
 	if err != nil {
-		return &pb.ProcessPaymentResponse{
-			Meta: &pb.ProcessPaymentResponse_Meta{
-				TraceId: "grpc-trace",
-				Message: err.Error(),
-			},
-			Data: &pb.ProcessPaymentResponse_Data{
-				Success: false,
-			},
-		}, nil
+		return nil, err
+	}
+	if !success {
+		return nil, errors.New("payment gagal diproses")
 	}
 
 	return &pb.ProcessPaymentResponse{
-		Meta: &pb.ProcessPaymentResponse_Meta{
-			TraceId: "grpc-trace",
-			Message: "Payment processing successfully initiated",
-		},
-		Data: &pb.ProcessPaymentResponse_Data{
-			Success: success,
-		},
+		PaymentId:  req.GetOrderId() + "-pay",
+		PaymentUrl: "https://mock-payment.example.com/pay/" + req.GetOrderId(),
 	}, nil
 }

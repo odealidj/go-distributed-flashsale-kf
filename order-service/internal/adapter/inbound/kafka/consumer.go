@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/go-kratos/kratos/v2/log"
+	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/otel"
 
 	"flashsale/order-service/internal/application/usecase"
 	"flashsale/order-service/internal/domain/model"
+	"flashsale/shared/pkg/telemetry"
 )
 
 type Consumer struct {
@@ -52,11 +54,25 @@ func (c *Consumer) Start(ctx context.Context) {
 			fetches.EachRecord(func(record *kgo.Record) {
 				c.logger.Infof("Received message on topic %s", record.Topic)
 
+				// Extract traceparent from Kafka headers
+				var traceparent string
+				for _, h := range record.Headers {
+					if h.Key == "traceparent" {
+						traceparent = string(h.Value)
+						break
+					}
+				}
+
+				// Lanjutkan trace context dari publisher
+				ctxWithTrace := telemetry.InjectTraceparent(ctx, traceparent)
+				ctxWithTrace, span := otel.Tracer("order-service-consumer").Start(ctxWithTrace, "ConsumeEvent "+record.Topic)
+				defer span.End()
+
 				switch record.Topic {
 				case "flashsale.inventory.events":
 					var event model.StockReservedEvent
 					if err := json.Unmarshal(record.Value, &event); err == nil {
-						c.usecase.HandleStockReserved(ctx, &event)
+						c.usecase.HandleStockReserved(ctxWithTrace, &event)
 					} else {
 						c.logger.Errorf("Failed to unmarshal StockReservedEvent: %v", err)
 					}
@@ -64,7 +80,7 @@ func (c *Consumer) Start(ctx context.Context) {
 				case "flashsale.payment.events":
 					var event model.PaymentCompletedEvent
 					if err := json.Unmarshal(record.Value, &event); err == nil {
-						c.usecase.HandlePaymentCompleted(ctx, &event)
+						c.usecase.HandlePaymentCompleted(ctxWithTrace, &event)
 					} else {
 						c.logger.Errorf("Failed to unmarshal PaymentCompletedEvent: %v", err)
 					}

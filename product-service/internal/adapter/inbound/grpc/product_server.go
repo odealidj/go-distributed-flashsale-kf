@@ -3,49 +3,39 @@ package grpc
 import (
 	"context"
 
-	"github.com/go-kratos/kratos/v2/log"
 	pb "flashsale/proto/product/v1"
 	"flashsale/product-service/internal/application/usecase"
 )
 
-// ProductServiceServer adalah Inbound Adapter gRPC.
-type ProductServiceServer struct {
+type ProductServer struct {
 	pb.UnimplementedProductServiceServer
-	uc  *usecase.ListFlashSaleProductsUsecase
-	log *log.Helper
+	usecase *usecase.ListFlashSaleProductsUsecase
 }
 
-func NewProductServiceServer(uc *usecase.ListFlashSaleProductsUsecase, logger log.Logger) *ProductServiceServer {
-	return &ProductServiceServer{
-		uc:  uc,
-		log: log.NewHelper(logger),
+func NewProductServer(uc *usecase.ListFlashSaleProductsUsecase) *ProductServer {
+	return &ProductServer{
+		usecase: uc,
 	}
 }
 
-func (s *ProductServiceServer) ListFlashSaleProducts(ctx context.Context, req *pb.ListFlashSaleProductsRequest) (*pb.ListFlashSaleProductsResponse, error) {
-	products, total, err := s.uc.Execute(ctx, req.GetPage(), req.GetPerPage())
+func (s *ProductServer) ListFlashSaleProducts(ctx context.Context, req *pb.ListFlashSaleProductsRequest) (*pb.ListFlashSaleProductsResponse, error) {
+	products, total, err := s.usecase.Execute(ctx, req.Page, req.PerPage)
 	if err != nil {
 		return nil, err
 	}
 
-	var pbProducts []*pb.Product
+	var pbProducts []*pb.ProductItem
 	for _, p := range products {
-		pbProducts = append(pbProducts, &pb.Product{
+		pbProducts = append(pbProducts, &pb.ProductItem{
 			Id:             p.ID,
 			Name:           p.Name,
 			OriginalPrice:  p.OriginalPrice,
-			FlashSalePrice: p.FlashSalePrice,
+			FlashsalePrice: p.FlashSalePrice,
 		})
 	}
 
 	return &pb.ListFlashSaleProductsResponse{
-		Meta: &pb.ListFlashSaleProductsResponse_Meta{
-			TraceId: "TODO-TRACE", // Akan di-inject middleware nanti
-			Message: "success",
-			Total:   total,
-			Page:    req.GetPage(),
-			PerPage: req.GetPerPage(),
-		},
-		Data: pbProducts,
+		Products:   pbProducts,
+		TotalItems: total,
 	}, nil
 }

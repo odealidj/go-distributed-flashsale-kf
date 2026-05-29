@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"os"
 
-	kratoshttp "github.com/go-kratos/kratos/v2/transport/http"
 	"github.com/go-kratos/kratos/v2"
 	"github.com/go-kratos/kratos/v2/log"
+	"github.com/go-kratos/kratos/v2/middleware/tracing"
+	kratoshttp "github.com/go-kratos/kratos/v2/transport/http"
 
 	"flashsale/api-gateway/internal/adapter/inbound/rest"
 	"flashsale/api-gateway/internal/adapter/outbound/grpc"
 	"flashsale/api-gateway/internal/application/usecase"
+	"flashsale/shared/pkg/telemetry"
 )
 
 func main() {
@@ -21,39 +24,43 @@ func main() {
 		"service.version", "v1.0.0",
 	)
 
-	// 1. Setup gRPC Clients (Akan diarahkan ke docker DNS nantinya)
-	// Di local tanpa docker, arahkan ke localhost:9001 dan localhost:9002
-	productEndpoint := os.Getenv("PRODUCT_GRPC_ENDPOINT")
+	// Init Tracer
+	tp, err := telemetry.InitTracer(context.Background(), "api-gateway", "localhost:4317")
+	if err != nil {
+		panic(err)
+	}
+	defer tp.Shutdown(context.Background())
+
+	productEndpoint := os.Getenv("PRODUCT_SERVICE_ENDPOINT")
 	if productEndpoint == "" {
 		productEndpoint = "localhost:9001"
 	}
-	inventoryEndpoint := os.Getenv("INVENTORY_GRPC_ENDPOINT")
+	inventoryEndpoint := os.Getenv("INVENTORY_SERVICE_ENDPOINT")
 	if inventoryEndpoint == "" {
 		inventoryEndpoint = "localhost:9002"
 	}
+	paymentEndpoint := os.Getenv("PAYMENT_SERVICE_ENDPOINT")
+	if paymentEndpoint == "" {
+		paymentEndpoint = "localhost:9004"
+	}
 
-	prodClient, invClient, err := grpc.NewGrpcClients(productEndpoint, inventoryEndpoint)
+	prodClient, invClient, payClient, err := grpc.NewGrpcClients(productEndpoint, inventoryEndpoint, paymentEndpoint)
 	if err != nil {
 		panic(err)
 	}
 
-	// 2. Setup Usecase
-	uc := usecase.NewGatewayUsecase(prodClient, invClient)
+	uc := usecase.NewGatewayUsecase(prodClient, invClient, payClient)
 
-	// 3. Setup HTTP Server
-	httpServer := kratoshttp.NewServer(
-		kratoshttp.Address(":8080"),
+	httpSrv := kratoshttp.NewServer(
+		kratoshttp.Address(":8000"),
 		kratoshttp.Logger(logger),
+		kratoshttp.Middleware(tracing.Server()),
 	)
+	rest.RegisterHTTPServer(httpSrv, uc, logger)
 
-	rest.RegisterHTTPServer(httpServer, uc, logger)
-
-	// 4. Jalankan App
 	app := kratos.New(
 		kratos.Name("api-gateway"),
-		kratos.Server(
-			httpServer,
-		),
+		kratos.Server(httpSrv),
 		kratos.Logger(logger),
 	)
 

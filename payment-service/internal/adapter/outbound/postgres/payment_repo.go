@@ -7,6 +7,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"flashsale/payment-service/internal/application/port"
 	"flashsale/payment-service/internal/domain/model"
+	"flashsale/shared/pkg/telemetry"
 )
 
 type paymentRepository struct {
@@ -35,10 +36,11 @@ func (r *paymentRepository) SavePaymentAndEmitEvent(ctx context.Context, payment
 
 	// 2. Simpan Outbox Event
 	payloadBytes, _ := json.Marshal(event)
+	tracePayload := telemetry.ExtractTraceparent(ctx)
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO outbox_messages (aggregate_id, aggregate_type, event_type, payload, status)
-		VALUES ($1, $2, $3, $4, 'PENDING')
-	`, payment.OrderID, "order", "PaymentCompletedEvent", string(payloadBytes))
+		INSERT INTO outbox_messages (aggregate_id, aggregate_type, event_type, payload, trace_payload, status)
+		VALUES ($1, $2, $3, $4, $5, 'PENDING')
+	`, payment.OrderID, "order", "PaymentCompletedEvent", string(payloadBytes), tracePayload)
 	if err != nil {
 		return err
 	}

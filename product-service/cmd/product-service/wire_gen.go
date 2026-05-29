@@ -20,10 +20,9 @@ import (
 
 // Injectors from wire.go:
 
-// initApp meng-inject seluruh dependensi dari Repository hingga gRPC Server.
-func initApp(db *sqlx.DB, logger log.Logger) (*grpc.ProductServiceServer, error) {
+func initApp(db *sqlx.DB, logger log.Logger) (*grpc.ProductServer, error) {
 	productRepository := postgres.NewProductRepo(db)
 	listFlashSaleProductsUsecase := usecase.NewListFlashSaleProductsUsecase(productRepository)
-	productServiceServer := grpc.NewProductServiceServer(listFlashSaleProductsUsecase, logger)
-	return productServiceServer, nil
+	productServer := grpc.NewProductServer(listFlashSaleProductsUsecase)
+	return productServer, nil
 }

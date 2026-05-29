@@ -3,46 +3,34 @@ package grpc
 import (
 	"context"
 
-	"github.com/go-kratos/kratos/v2/log"
 	pb "flashsale/proto/inventory/v1"
 	"flashsale/inventory-service/internal/application/usecase"
 )
 
-type InventoryServiceServer struct {
+type InventoryServer struct {
 	pb.UnimplementedInventoryServiceServer
-	uc  *usecase.ReserveStockUsecase
-	log *log.Helper
+	usecase *usecase.ReserveStockUsecase
 }
 
-func NewInventoryServiceServer(uc *usecase.ReserveStockUsecase, logger log.Logger) *InventoryServiceServer {
-	return &InventoryServiceServer{
-		uc:  uc,
-		log: log.NewHelper(logger),
+func NewInventoryServer(uc *usecase.ReserveStockUsecase) *InventoryServer {
+	return &InventoryServer{
+		usecase: uc,
 	}
 }
 
-func (s *InventoryServiceServer) ReserveStock(ctx context.Context, req *pb.ReserveStockRequest) (*pb.ReserveStockResponse, error) {
-	err := s.uc.Execute(ctx, req.GetProductId(), req.GetUserId(), req.GetEventId())
+func (s *InventoryServer) ReserveStock(ctx context.Context, req *pb.ReserveStockRequest) (*pb.ReserveStockResponse, error) {
+	err := s.usecase.Execute(ctx, req.GetProductId(), req.GetUserId(), req.GetIdempotencyKey())
 	if err != nil {
-		// Asumsi error disini adalah error stok habis (di prod butuh pemetaan grpc.code)
 		return &pb.ReserveStockResponse{
-			Meta: &pb.ReserveStockResponse_Meta{
-				TraceId: "TODO-TRACE",
-				Message: "failed: " + err.Error(),
-			},
-			Data: &pb.ReserveStockResponse_Data{
-				Success: false,
-			},
+			Success: false,
+			EventId: "",
+			Message: err.Error(),
 		}, nil
 	}
 
 	return &pb.ReserveStockResponse{
-		Meta: &pb.ReserveStockResponse_Meta{
-			TraceId: "TODO-TRACE",
-			Message: "success",
-		},
-		Data: &pb.ReserveStockResponse_Data{
-			Success: true,
-		},
+		Success: true,
+		EventId: req.GetIdempotencyKey(),
+		Message: "stock reserved",
 	}, nil
 }

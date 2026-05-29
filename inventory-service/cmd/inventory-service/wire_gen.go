@@ -22,10 +22,10 @@ import (
 
 // Injectors from wire.go:
 
-func initApp(db *sqlx.DB, rdb *redis.Client, logger log.Logger) (*grpc.InventoryServiceServer, error) {
+func initApp(db *sqlx.DB, rdb *redis.Client, logger log.Logger) (*grpc.InventoryServer, error) {
 	redisPort := redis2.NewRedisPort(rdb)
 	outboxPort := postgres.NewOutboxRepo(db)
 	reserveStockUsecase := usecase.NewReserveStockUsecase(redisPort, outboxPort)
-	inventoryServiceServer := grpc.NewInventoryServiceServer(reserveStockUsecase, logger)
-	return inventoryServiceServer, nil
+	inventoryServer := grpc.NewInventoryServer(reserveStockUsecase)
+	return inventoryServer, nil
 }

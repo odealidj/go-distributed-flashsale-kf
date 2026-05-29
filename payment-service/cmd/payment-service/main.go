@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"flashsale/shared/pkg/telemetry"
+	"github.com/go-kratos/kratos/v2/middleware/tracing"
 	"os"
 
 	"github.com/go-kratos/kratos/v2"
@@ -10,11 +12,17 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 
-	"flashsale/shared/pkg/outbox"
 	pb "flashsale/proto/payment/v1"
+	"flashsale/shared/pkg/outbox"
 )
 
 func main() {
+	// Init Tracer
+	tp, err := telemetry.InitTracer(context.Background(), "payment-service", "localhost:4317")
+	if err != nil {
+		panic(err)
+	}
+	defer tp.Shutdown(context.Background())
 	logger := log.With(log.NewStdLogger(os.Stdout),
 		"ts", log.DefaultTimestamp,
 		"caller", log.DefaultCaller,
@@ -40,6 +48,7 @@ func main() {
 	grpcServer := kratosgrpc.NewServer(
 		kratosgrpc.Address(":9003"),
 		kratosgrpc.Logger(logger),
+		kratosgrpc.Middleware(tracing.Server()),
 	)
 	pb.RegisterPaymentServiceServer(grpcServer, paymentServer)
 

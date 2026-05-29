@@ -13,10 +13,9 @@ import (
 )
 
 func InitializePaymentServer(db *sqlx.DB) *grpc.PaymentServer {
-	wire.Build(
+	panic(wire.Build(
 		postgres.NewPaymentRepository,
 		usecase.NewProcessPaymentUsecase,
 		grpc.NewPaymentServer,
-	)
-	return &grpc.PaymentServer{}
+	))
 }

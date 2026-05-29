@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
+	"flashsale/shared/pkg/telemetry"
+	"github.com/go-kratos/kratos/v2/middleware/tracing"
 	"os"
 
-	kratosgrpc "github.com/go-kratos/kratos/v2/transport/grpc"
 	"github.com/go-kratos/kratos/v2"
 	"github.com/go-kratos/kratos/v2/log"
+	kratosgrpc "github.com/go-kratos/kratos/v2/transport/grpc"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 
@@ -13,6 +16,12 @@ import (
 )
 
 func main() {
+	// Init Tracer
+	tp, err := telemetry.InitTracer(context.Background(), "product-service", "localhost:4317")
+	if err != nil {
+		panic(err)
+	}
+	defer tp.Shutdown(context.Background())
 	logger := log.With(log.NewStdLogger(os.Stdout),
 		"ts", log.DefaultTimestamp,
 		"caller", log.DefaultCaller,
@@ -39,6 +48,7 @@ func main() {
 	grpcServer := kratosgrpc.NewServer(
 		kratosgrpc.Address(":9001"),
 		kratosgrpc.Logger(logger),
+		kratosgrpc.Middleware(tracing.Server()),
 	)
 	pb.RegisterProductServiceServer(grpcServer, productServer)
 

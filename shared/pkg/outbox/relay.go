@@ -2,7 +2,6 @@ package outbox
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -15,6 +14,7 @@ type OutboxMessage struct {
 	AggregateType string `db:"aggregate_type"`
 	EventType     string `db:"event_type"`
 	Payload       string `db:"payload"`
+	TracePayload  string `db:"trace_payload"`
 }
 
 type RelayWorker struct {
@@ -60,7 +60,7 @@ func (w *RelayWorker) processPendingMessages(ctx context.Context, topic string) 
 	// Polling messages from database
 	var msgs []OutboxMessage
 	err := w.db.SelectContext(ctx, &msgs, `
-		SELECT id, aggregate_type, event_type, payload 
+		SELECT id, aggregate_type, event_type, payload, COALESCE(trace_payload, '') as trace_payload 
 		FROM outbox_messages 
 		WHERE status = 'PENDING' 
 		ORDER BY id ASC LIMIT 50 FOR UPDATE SKIP LOCKED
@@ -79,6 +79,14 @@ func (w *RelayWorker) processPendingMessages(ctx context.Context, topic string) 
 			Topic: topic,
 			Key:   []byte(msg.AggregateType),
 			Value: []byte(msg.Payload),
+		}
+
+		// Inject trace payload if exist
+		if msg.TracePayload != "" {
+			record.Headers = append(record.Headers, kgo.RecordHeader{
+				Key:   "traceparent",
+				Value: []byte(msg.TracePayload),
+			})
 		}
 
 		// Karena ini scaffold, kita pakai produce sync
