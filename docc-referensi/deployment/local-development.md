@@ -157,29 +157,27 @@ make up COMPOSE="docker compose"
 
 ## 8. Workflow Debug Lokal
 
-Untuk debug service dari IDE/local terminal:
+Untuk melakukan *debug* fungsi Go menggunakan IDE (VSCode, GoLand) atau *local terminal*:
 
-```text
-make infra-up
-make kafka-topics
-make inventory-run
-make payment-run
-make order-run
-```
+1. **Jalankan Infrastruktur Pendukung Saja**
+   ```text
+   make infra-up
+   ```
+   Perintah ini HANYA menyalakan *dependencies* (PostgreSQL, Redis, Kafka, Jaeger) tanpa menyalakan *microservices* Go.
 
-`make infra-up` hanya menjalankan infrastructure:
+2. **Jalankan Service via Debugger IDE**
+   - Buka file `main.go` dari service yang ingin di- *debug* (misal: `order-service/cmd/order-service/main.go`).
+   - Gunakan fitur **Run and Debug** bawaan IDE untuk menempelkan *debugger* pada proses tersebut.
 
-```text
-postgres
-redis
-kafka
-kafka-ui
-otel-collector
-jaeger
-prometheus/grafana jika profile observability aktif
-```
-
-Service aplikasi dapat dijalankan terpisah agar breakpoint/debugger lebih mudah digunakan.
+3. **Jalankan Service Lain (Opsional)**
+   Jika Anda sedang men-*debug* `order-service`, namun butuh service lain tetap menyala, gunakan perintah *Make* spesifik:
+   ```text
+   make run-api-gateway
+   make run-product
+   make run-inventory
+   make run-payment
+   ```
+   Service aplikasi lain akan berjalan di *background*, dan Anda bisa fokus melakukan *debug* baris-demi-baris pada `order-service`.
 
 ## 9. Verifikasi Trace Demo
 
