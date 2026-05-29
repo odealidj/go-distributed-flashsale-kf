@@ -9,35 +9,32 @@ Ini adalah pandangan "helikopter" dari seluruh sistem, menunjukkan bagaimana kli
 
 ```mermaid
 flowchart LR
-    %% Aktor
-    Cust((Mobile/Web \n Customer))
-    
-    %% Sistem Utama
-    subgraph "Flash Sale System"
+    Cust((Mobile/Web<br/>Customer))
+    subgraph FlashSaleSystem["Flash Sale System"]
         GW[API Gateway]
-        
-        subgraph "Backend Services"
+        subgraph BackendServices["Backend Services"]
             Prod[Product Service]
             Inv[Inventory Service]
             Ord[Order Service]
             Pay[Payment Service]
         end
-        
-        %% Infrastruktur
         Kafka[[Kafka Event Broker]]
-        Datastore[(Datastores \n Redis & Postgres)]
+        Datastore[(Datastores<br/>Redis & Postgres)]
     end
-    
-    %% External
-    ExtBank[3rd Party \n Payment Gateway]
-
-    %% Koneksi Level Atas
+    ExtBank[3rd Party<br/>Payment Gateway]
     Cust <-->|HTTPS / REST| GW
-    GW <-->|gRPC| Backend Services
-    
-    Backend Services -.->|Async Pub/Sub| Kafka
-    Backend Services <-->|R/W| Datastore
-    
+    GW <-->|gRPC| Prod
+    GW <-->|gRPC| Inv
+    GW <-->|gRPC| Ord
+    GW <-->|gRPC| Pay
+    Prod -.->|Async Pub/Sub| Kafka
+    Inv -.->|Async Pub/Sub| Kafka
+    Ord -.->|Async Pub/Sub| Kafka
+    Pay -.->|Async Pub/Sub| Kafka
+    Prod <-->|R/W| Datastore
+    Inv <-->|R/W| Datastore
+    Ord <-->|R/W| Datastore
+    Pay <-->|R/W| Datastore
     Pay <-->|HTTPS| ExtBank
 ```
 
@@ -48,22 +45,16 @@ Inventory Service adalah layanan paling kritis. Diagram ini menunjukkan siapa ya
 
 ```mermaid
 flowchart LR
-    %% Pemanggil
     GW[API Gateway]
     OrderSvc[Order Service]
-    
-    %% Domain Inti
-    subgraph "Inventory Domain"
+    subgraph InventoryDomain["Inventory Domain"]
         InvSvc[Inventory Service]
-        Redis[(Redis Cache \n Atomic Counter)]
-        InvDB[(Inventory \n Postgres DB)]
+        Redis[(Redis Cache<br/>Atomic Counter)]
+        InvDB[(Inventory<br/>Postgres DB)]
     end
-    
-    %% Koneksi
-    GW -->|gRPC (Internal Call) \n /checkout| InvSvc
-    OrderSvc -.->|Kafka Event \n OrderCancelledEvent| InvSvc
-    
-    InvSvc <-->|Lua Scripts (Microsec)| Redis
+    GW -->|gRPC Internal Call<br/>/checkout| InvSvc
+    OrderSvc -.->|Kafka Event<br/>OrderCancelledEvent| InvSvc
+    InvSvc <-->|Lua Scripts Atomic| Redis
     InvSvc <-->|Async Sync / Permanent| InvDB
 ```
 *Catatan:* Gateway melakukan pemanggilan internal gRPC secara sinkron untuk memotong stok di Redis. Jika sukses, Inventory menembakkan event ke Kafka.
@@ -75,23 +66,16 @@ Order Service bertindak sebagai "buku catatan". Layanan ini sangat digerakkan ol
 
 ```mermaid
 flowchart LR
-    %% Pemanggil
     GW[API Gateway]
     InvSvc[Inventory Service]
     PaySvc[Payment Service]
-    
-    %% Domain Inti
-    subgraph "Order Domain"
+    subgraph OrderDomain["Order Domain"]
         OrdSvc[Order Service]
-        OrdDB[(Order \n Postgres DB)]
+        OrdDB[(Order<br/>Postgres DB)]
     end
-    
-    %% Koneksi
-    GW -->|gRPC (Public API via GW) \n /orders/{id}| OrdSvc
-    
-    InvSvc -.->|Kafka Event \n StockReservedEvent| OrdSvc
-    PaySvc -.->|Kafka Event \n PaymentCompletedEvent| OrdSvc
-    
+    GW -->|gRPC Public API<br/>/orders id| OrdSvc
+    InvSvc -.->|Kafka Event<br/>StockReservedEvent| OrdSvc
+    PaySvc -.->|Kafka Event<br/>PaymentCompletedEvent| OrdSvc
     OrdSvc <-->|Read/Write| OrdDB
 ```
 *Catatan:* Order Service membuat baris pesanan `PENDING_PAYMENT` hanya ketika mendengar `StockReservedEvent` dari Inventory. Status berubah menjadi `PAID` ketika mendengar `PaymentCompletedEvent`.
@@ -103,25 +87,17 @@ Payment Service bertugas sebagai jembatan antara sistem internal dan Payment Gat
 
 ```mermaid
 flowchart LR
-    %% Pemanggil
     GW[API Gateway]
-    
-    %% Domain Inti
-    subgraph "Payment Domain"
+    subgraph PaymentDomain["Payment Domain"]
         PaySvc[Payment Service]
-        PayDB[(Payment \n Postgres DB)]
+        PayDB[(Payment<br/>Postgres DB)]
     end
-    
-    %% External
-    ExtBank[External \n Payment Gateway]
+    ExtBank[External<br/>Payment Gateway]
     OrderSvc[Order Service]
-    
-    %% Koneksi
-    GW -->|gRPC (Public API via GW) \n /pay| PaySvc
-    
+    GW -->|gRPC Public API<br/>/pay| PaySvc
     PaySvc <-->|HTTPS API| ExtBank
     PaySvc <-->|Record Log| PayDB
-    PaySvc -.->|Kafka Event \n PaymentCompleted| OrderSvc
+    PaySvc -.->|Kafka Event<br/>PaymentCompleted| OrderSvc
 ```
 
 ---
@@ -131,21 +107,15 @@ Product Service adalah layanan *read-heavy* yang menampilkan katalog.
 
 ```mermaid
 flowchart LR
-    %% Pemanggil
     GW[API Gateway]
     Admin((Internal Admin))
-    
-    %% Domain Inti
-    subgraph "Product Domain"
+    subgraph ProductDomain["Product Domain"]
         ProdSvc[Product Service]
-        Redis[(Redis Cache \n Product Info)]
-        ProdDB[(Product \n Postgres DB)]
+        Redis[(Redis Cache<br/>Product Info)]
+        ProdDB[(Product<br/>Postgres DB)]
     end
-    
-    %% Koneksi
-    GW -->|gRPC (Public API via GW) \n /products| ProdSvc
-    Admin -->|gRPC (Internal) \n /products/add| ProdSvc
-    
-    ProdSvc <-->|Cache Read (99%)| Redis
-    ProdSvc <-->|DB Read/Write (1%)| ProdDB
+    GW -->|gRPC Public API<br/>/products| ProdSvc
+    Admin -->|gRPC Internal<br/>/products/add| ProdSvc
+    ProdSvc <-->|Cache Read 99pct| Redis
+    ProdSvc <-->|DB Read/Write 1pct| ProdDB
 ```
