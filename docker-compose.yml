@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------------------
+  # 1. DATABASE (POSTGRESQL)
+  # ----------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    container_name: flashsale-postgres
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: rootpassword
+      POSTGRES_DB: flashsale_master # Kita akan buat logical db (db_order, db_inventory) secara manual / via script nanti
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - flashsale_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d flashsale_master"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------
+  # 2. CACHE & ATOMIC COUNTER (REDIS)
+  # ----------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: flashsale-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - flashsale_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ----------------------------------------------------
+  # 3. MESSAGE BROKER (KAFKA - KRaft Mode)
+  # ----------------------------------------------------
+  kafka:
+    image: bitnami/kafka:3.5
+    container_name: flashsale-kafka
+    environment:
+      - KAFKA_ENABLE_KRAFT=yes
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      - KAFKA_BROKER_ID=1
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    networks:
+      - flashsale_net
+    volumes:
+      - kafkadata:/bitnami/kafka
+
+  # ----------------------------------------------------
+  # 4. KAFKA UI (PROVE)
+  # ----------------------------------------------------
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: flashsale-kafka-ui
+    depends_on:
+      - kafka
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=local
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+    ports:
+      - "8080:8080"
+    networks:
+      - flashsale_net
+
+  # ----------------------------------------------------
+  # 5. OBSERVABILITY (JAEGER)
+  # ----------------------------------------------------
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: flashsale-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686" # UI
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    networks:
+      - flashsale_net
+
+volumes:
+  pgdata:
+  kafkadata:
+
+networks:
+  flashsale_net:
+    driver: bridge
