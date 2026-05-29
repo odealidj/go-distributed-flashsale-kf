@@ -13,7 +13,6 @@ sequenceDiagram
     participant I as Inventory Service
     participant K as Kafka
     participant P as Payment Service
-
     U->>O: POST /checkout (product_id, qty)
     O->>I: gRPC ReserveStock(product_id, qty)
     Note over I: Redis Lua DECR
@@ -23,7 +22,6 @@ sequenceDiagram
     K-->>I: Consume `OrderCreatedEvent`
     I->>I: DB: Persist Reserved Stock
     O-->>U: HTTP 202 Accepted (Order Created)
-    
     Note over U, P: Beberapa menit kemudian...
     U->>P: POST /pay (order_id)
     P->>P: Proses mock payment
@@ -43,12 +41,10 @@ sequenceDiagram
     participant O as Order Service
     participant I as Inventory Service
     participant K as Kafka
-
     Note over O: Timer 15 menit berakhir (Cron/Delayed Queue)
     O->>O: Cek status: Masih PENDING?
     O->>O: DB: Update Order (Status: CANCELLED)
     O->>K: Emit `OrderCancelledEvent`
-    
     K-->>I: Consume `OrderCancelledEvent`
     Note over I: Mulai Compensation!
     I->>I: Redis Lua INCR (Kembalikan stok cache)

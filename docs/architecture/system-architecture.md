@@ -5,20 +5,16 @@
 Sistem terdiri dari beberapa komponen utama yang saling berinteraksi:
 
 ```mermaid
-graph TD
+flowchart TD
     Client[Client/Mobile App] -->|HTTPS| API_Gateway[API Gateway]
-    
     API_Gateway -->|gRPC/HTTP| ProductSvc[Product Service]
     API_Gateway -->|gRPC/HTTP| OrderSvc[Order Service]
     API_Gateway -->|gRPC/HTTP| PaymentSvc[Payment Service]
     API_Gateway -->|gRPC/HTTP| InventorySvc[Inventory Service]
-    
     InventorySvc <-->|Lua Scripts| RedisCache[(Redis - Primary Stock)]
     InventorySvc -->|Sync| DB_Inv[(PostgreSQL - Inv DB)]
-    
     OrderSvc -->|Sync| DB_Order[(PostgreSQL - Order DB)]
     ProductSvc -->|Sync| DB_Prod[(PostgreSQL - Product DB)]
-    
     OrderSvc -.->|Produce| Kafka[Apache Kafka]
     InventorySvc -.->|Produce/Consume| Kafka
     PaymentSvc -.->|Produce| Kafka
