@@ -47,3 +47,75 @@ Sebuah fase dianggap selesai jika:
 *   Membuat *script* k6 di folder `scripts/` untuk mensimulasikan 10,000 *concurrent users* mencoba membeli 100 stok barang dalam detik yang sama.
 *   Verifikasi bahwa *Redis Lua Script* sukses mencegah stok minus (*overselling*).
 *   Verifikasi bahwa *API Gateway* dapat merespons di bawah 200ms meskipun Kafka di-*backend* sibuk memproses pesanan secara asinkron.
+
+## 9. Fase 07 - Resilience (Ketahanan Sistem)
+**Target:** Memastikan kegagalan satu komponen tidak merembet ke seluruh sistem (*cascading failure*).
+
+### 9.1 Pola yang Diimplementasikan
+
+#### Circuit Breaker (API Gateway → gRPC Services)
+*   **Library:** `github.com/sony/gobreaker`
+*   **Lokasi:** `shared/pkg/resilience/circuit_breaker.go` + `api-gateway/internal/adapter/outbound/grpc/clients.go`
+*   **Konfigurasi default:** Terbuka jika 50% dari 10 request terakhir gagal. Coba tutup (*half-open*) setelah 5 detik.
+*   **Isolasi:** Circuit Breaker **terpisah** per service downstream (product, inventory, payment). Kegagalan inventory tidak mematikan payment.
+*   **Error khusus:** `gobreaker.ErrOpenState` dikembalikan saat CB terbuka, diterjemahkan menjadi HTTP 503.
+
+#### Timeout Per-Call gRPC
+*   **Lokasi:** `api-gateway/internal/adapter/outbound/grpc/clients.go`
+*   **Nilai:** 3 detik per panggilan gRPC (harus < timeout Nginx/upstream).
+*   **Implementasi:** `context.WithTimeout(ctx, 3*time.Second)` di setiap method.
+
+#### gRPC Keepalive
+*   **Lokasi:** `api-gateway/internal/adapter/outbound/grpc/clients.go`
+*   **Parameter:** Ping setiap 10 detik, timeout 5 detik.
+*   **Fungsi:** Mendeteksi koneksi mati (dead connection) tanpa menunggu request berikutnya gagal.
+
+#### Retry dengan Exponential Backoff + Jitter
+*   **Library:** Pure Go, tanpa dependensi eksternal.
+*   **Lokasi:** `shared/pkg/resilience/retry.go`
+*   **Default:** 3 percobaan, interval awal 100ms, multiplier 2x, max 2 detik, ±30% jitter.
+*   **CATATAN PENTING:** Retry **TIDAK** digunakan untuk `ReserveStock` karena operasi ini memotong stok di Redis. Retry bisa menyebabkan pemotongan ganda jika event_id berbeda. Idempotency dijaga oleh Redis Lua Script via `idempotency_key`.
+*   Retry digunakan untuk: Outbox Relay publish ke Kafka.
+
+#### Outbox Relay Worker — Retry + Status FAILED
+*   **Lokasi:** `shared/pkg/outbox/relay.go`
+*   **Perubahan:** Jika publish ke Kafka gagal setelah 5 retry, baris ditandai `status = 'FAILED'` (bukan hilang).
+*   **RequiredAcks:** `kgo.AllISRAcks()` — Kafka hanya dianggap berhasil menerima jika semua ISR (in-sync replica) mengkonfirmasi.
+*   **Transaksi:** Seluruh batch polling dibungkus transaksi `FOR UPDATE SKIP LOCKED`.
+
+#### Kafka Consumer — Manual Commit + Dead Letter Queue (DLQ)
+*   **Lokasi:** `order-service/internal/adapter/inbound/kafka/consumer.go`
+*   **Manual Commit:** `DisableAutoCommit()`. Offset hanya di-commit setelah pemrosesan sukses atau setelah dikirim ke DLQ.
+*   **DLQ Topic:** `flashsale.order.dlq`
+*   **Metadata DLQ:** Setiap pesan DLQ menyertakan header: `dlq.original.topic`, `dlq.error`, `dlq.timestamp`.
+*   **Retry Consumer:** 3x dengan backoff 500ms–5s sebelum dikirim ke DLQ.
+
+#### Database Connection Pool
+*   **Library:** `shared/pkg/database/postgres.go`
+*   **Nilai default:** `MaxOpenConns=25`, `MaxIdleConns=10`, `ConnMaxLifetime=5m`, `ConnMaxIdleTime=2m`.
+*   **Tujuan:** Mencegah connection pool exhaustion saat thundering herd, dan membuang koneksi basi yang mungkin ditutup sisi server.
+
+#### Rate Limiting via Nginx
+*   **Lokasi:** `nginx.conf` (sudah ada)
+*   **Konfigurasi:** `limit_req_zone` 10 req/s per IP, burst 20 dengan `nodelay`, HTTP 429 jika terlampaui.
+
+### 9.2 Lokasi File Baru
+| File | Deskripsi |
+|------|-----------|
+| `shared/pkg/resilience/circuit_breaker.go` | Circuit Breaker wrapper (sony/gobreaker) |
+| `shared/pkg/resilience/retry.go` | Retry + exponential backoff + jitter |
+| `shared/pkg/resilience/doc.go` | Dokumentasi package |
+| `shared/pkg/database/postgres.go` | DB connection pool helper |
+
+### 9.3 File yang Dimodifikasi
+| File | Perubahan |
+|------|-----------|
+| `api-gateway/internal/adapter/outbound/grpc/clients.go` | + CB per service + timeout + keepalive |
+| `shared/pkg/outbox/relay.go` | + retry, RequiredAcks, status FAILED |
+| `order-service/internal/adapter/inbound/kafka/consumer.go` | + DLQ, manual commit, retry |
+
+### 9.4 Apa yang Sengaja Tidak Di-Retry
+| Operasi | Alasan |
+|---------|--------|
+| `ReserveStock` (gRPC) | Non-idempoten untuk stok. Idempotency via Redis event_id. |
+| Parsing payload Kafka | Permanent error — payload corrupt tidak akan sembuh dengan retry. |

@@ -2,80 +2,165 @@ package grpc
 
 import (
 	"context"
+	"fmt"
+	"time"
 
-	"github.com/go-kratos/kratos/v2/transport/grpc"
+	kratosgrpc "github.com/go-kratos/kratos/v2/transport/grpc"
 	"github.com/go-kratos/kratos/v2/middleware/tracing"
+	"github.com/sony/gobreaker"
+	googlegrpc "google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 
 	"flashsale/api-gateway/internal/application/port"
+	"flashsale/shared/pkg/resilience"
 	inventoryv1 "flashsale/proto/inventory/v1"
 	paymentv1 "flashsale/proto/payment/v1"
 	productv1 "flashsale/proto/product/v1"
 )
 
+// callTimeout adalah batas waktu maksimum untuk setiap panggilan gRPC ke service downstream.
+// Nilai ini harus lebih kecil dari timeout HTTP yang diterima dari client (misal: Nginx 10s).
+const callTimeout = 3 * time.Second
+
+// grpcClients mengenkapsulasi semua koneksi gRPC downstream beserta
+// mekanisme resilience (circuit breaker) per-service.
 type grpcClients struct {
 	productClient   productv1.ProductServiceClient
 	inventoryClient inventoryv1.InventoryServiceClient
 	paymentClient   paymentv1.PaymentServiceClient
+
+	// Circuit breaker terpisah per-service agar isolasi kegagalan terjaga.
+	// Jika inventory CB terbuka, payment & product TIDAK terdampak.
+	productCB   *gobreaker.CircuitBreaker
+	inventoryCB *gobreaker.CircuitBreaker
+	paymentCB   *gobreaker.CircuitBreaker
 }
 
-func NewGrpcClients(productEndpoint, inventoryEndpoint, paymentEndpoint string) (port.ProductServiceClient, port.InventoryServiceClient, port.PaymentServiceClient, error) {
+// keepaliveParams mengatur agar koneksi idle tidak dianggap mati secara diam-diam.
+var keepaliveParams = googlegrpc.WithKeepaliveParams(keepalive.ClientParameters{
+	Time:                10 * time.Second, // Kirim keepalive ping setiap 10 detik
+	Timeout:             5 * time.Second,  // Timeout jika tidak ada respons setelah 5 detik
+	PermitWithoutStream: true,             // Kirim ping meski tidak ada request aktif
+})
+
+// NewGrpcClients membuat koneksi ke semua service downstream dengan:
+//   - Timeout per-call (callTimeout)
+//   - Keepalive untuk deteksi koneksi mati
+//   - Circuit Breaker per-service (menggunakan sony/gobreaker)
+//   - Tracing middleware (OpenTelemetry)
+func NewGrpcClients(productEndpoint, inventoryEndpoint, paymentEndpoint string) (
+	port.ProductServiceClient, port.InventoryServiceClient, port.PaymentServiceClient, error,
+) {
+	dialOpts := []googlegrpc.DialOption{keepaliveParams}
+
 	// Koneksi ke Product Service
-	connProd, err := grpc.DialInsecure(context.Background(), grpc.WithEndpoint(productEndpoint), grpc.WithMiddleware(tracing.Client()))
+	connProd, err := kratosgrpc.DialInsecure(
+		context.Background(),
+		kratosgrpc.WithEndpoint(productEndpoint),
+		kratosgrpc.WithMiddleware(tracing.Client()),
+		kratosgrpc.WithOptions(dialOpts...),
+	)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, fmt.Errorf("gagal koneksi ke product-service: %w", err)
 	}
-	prodClient := productv1.NewProductServiceClient(connProd)
 
 	// Koneksi ke Inventory Service
-	connInv, err := grpc.DialInsecure(context.Background(), grpc.WithEndpoint(inventoryEndpoint), grpc.WithMiddleware(tracing.Client()))
+	connInv, err := kratosgrpc.DialInsecure(
+		context.Background(),
+		kratosgrpc.WithEndpoint(inventoryEndpoint),
+		kratosgrpc.WithMiddleware(tracing.Client()),
+		kratosgrpc.WithOptions(dialOpts...),
+	)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, fmt.Errorf("gagal koneksi ke inventory-service: %w", err)
 	}
-	invClient := inventoryv1.NewInventoryServiceClient(connInv)
 
 	// Koneksi ke Payment Service
-	connPay, err := grpc.DialInsecure(context.Background(), grpc.WithEndpoint(paymentEndpoint), grpc.WithMiddleware(tracing.Client()))
+	connPay, err := kratosgrpc.DialInsecure(
+		context.Background(),
+		kratosgrpc.WithEndpoint(paymentEndpoint),
+		kratosgrpc.WithMiddleware(tracing.Client()),
+		kratosgrpc.WithOptions(dialOpts...),
+	)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, fmt.Errorf("gagal koneksi ke payment-service: %w", err)
 	}
-	payClient := paymentv1.NewPaymentServiceClient(connPay)
 
 	clients := &grpcClients{
-		productClient:   prodClient,
-		inventoryClient: invClient,
-		paymentClient:   payClient,
+		productClient:   productv1.NewProductServiceClient(connProd),
+		inventoryClient: inventoryv1.NewInventoryServiceClient(connInv),
+		paymentClient:   paymentv1.NewPaymentServiceClient(connPay),
+
+		productCB:   resilience.NewCircuitBreaker(resilience.DefaultCircuitBreakerConfig("product-service")),
+		inventoryCB: resilience.NewCircuitBreaker(resilience.DefaultCircuitBreakerConfig("inventory-service")),
+		paymentCB:   resilience.NewCircuitBreaker(resilience.DefaultCircuitBreakerConfig("payment-service")),
 	}
 
 	return clients, clients, clients, nil
 }
 
+// ListFlashSaleProducts memanggil Product Service dengan circuit breaker + timeout.
 func (c *grpcClients) ListFlashSaleProducts(ctx context.Context, page, perPage int32) (*productv1.ListFlashSaleProductsResponse, error) {
-	return c.productClient.ListFlashSaleProducts(ctx, &productv1.ListFlashSaleProductsRequest{
-		Page:    page,
-		PerPage: perPage,
-	})
-}
+	callCtx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 
-func (c *grpcClients) ReserveStock(ctx context.Context, productID, userID, eventID string) (bool, error) {
-	resp, err := c.inventoryClient.ReserveStock(ctx, &inventoryv1.ReserveStockRequest{
-		ProductId:      productID,
-		UserId:         userID,
-		IdempotencyKey: eventID,
-		Quantity:       1,
+	result, err := c.productCB.Execute(func() (interface{}, error) {
+		return c.productClient.ListFlashSaleProducts(callCtx, &productv1.ListFlashSaleProductsRequest{
+			Page:    page,
+			PerPage: perPage,
+		})
 	})
 	if err != nil {
-		return false, err
+		return nil, fmt.Errorf("product-service: %w", err)
 	}
+	return result.(*productv1.ListFlashSaleProductsResponse), nil
+}
+
+// ReserveStock memanggil Inventory Service dengan circuit breaker + timeout.
+// TIDAK menggunakan retry karena operasi ini TIDAK idempoten dari sisi Redis Lua Script —
+// retry bisa menyebabkan stok dipotong dua kali untuk event_id yang berbeda.
+// Idempotency sudah dijaga oleh Redis Lua Script via idempotency_key.
+func (c *grpcClients) ReserveStock(ctx context.Context, productID, userID, eventID string) (bool, error) {
+	callCtx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+
+	result, err := c.inventoryCB.Execute(func() (interface{}, error) {
+		return c.inventoryClient.ReserveStock(callCtx, &inventoryv1.ReserveStockRequest{
+			ProductId:      productID,
+			UserId:         userID,
+			IdempotencyKey: eventID,
+			Quantity:       1,
+		})
+	})
+	if err != nil {
+		// gobreaker.ErrOpenState berarti CB terbuka — service downstream sedang tidak sehat
+		if err == gobreaker.ErrOpenState {
+			return false, fmt.Errorf("inventory-service tidak tersedia sementara (circuit open): %w", err)
+		}
+		return false, fmt.Errorf("inventory-service: %w", err)
+	}
+
+	resp := result.(*inventoryv1.ReserveStockResponse)
 	return resp.GetSuccess(), nil
 }
 
+// ProcessPayment memanggil Payment Service dengan circuit breaker + timeout.
 func (c *grpcClients) ProcessPayment(ctx context.Context, orderID string, amount int64) (bool, error) {
-	resp, err := c.paymentClient.ProcessPayment(ctx, &paymentv1.ProcessPaymentRequest{
-		OrderId: orderID,
-		Amount:  amount,
+	callCtx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+
+	result, err := c.paymentCB.Execute(func() (interface{}, error) {
+		return c.paymentClient.ProcessPayment(callCtx, &paymentv1.ProcessPaymentRequest{
+			OrderId: orderID,
+			Amount:  amount,
+		})
 	})
 	if err != nil {
-		return false, err
+		if err == gobreaker.ErrOpenState {
+			return false, fmt.Errorf("payment-service tidak tersedia sementara (circuit open): %w", err)
+		}
+		return false, fmt.Errorf("payment-service: %w", err)
 	}
-	return resp != nil, nil
+
+	return result != nil, nil
 }

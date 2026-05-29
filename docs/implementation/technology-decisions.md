@@ -37,3 +37,11 @@ Dokumen ini mendokumentasikan pustaka (*library*) dan teknologi yang dipilih unt
 ## 6. Reverse Proxy & API Gateway
 *   **Reverse Proxy**: `Traefik` atau `NGINX` (Ditaruh pada layer paling depan di Docker Compose). Mengurus TLS, *Rate Limiting*, dan pemantauan trafik L7 secara mentah.
 *   **API Gateway (BFF)**: Aplikasi Go murni yang bertugas mem-parsing Auth/JWT pengguna, mengagregasi data, dan menjadi tameng sebelum *request* dikirimkan secara internal lewat gRPC ke *backend services*.
+
+## 7. Resilience (Ketahanan Sistem)
+*   **Circuit Breaker**: `github.com/sony/gobreaker`
+    *   **Alasan**: Ringan, murni Go (tanpa CGO), tidak ada dependensi eksternal, API sederhana dan idiomatis. Alternatif seperti `afex/hystrix-go` lebih kompleks dan kurang aktif. CB ditempatkan di API Gateway karena dialah yang memanggil semua service downstream.
+*   **Retry Strategy**: Implementasi kustom murni Go (`shared/pkg/resilience/retry.go`)
+    *   **Alasan**: Tidak perlu library eksternal untuk logika retry sederhana. Exponential backoff dengan jitter ±30% cukup untuk mencegah thundering herd saat recovery.
+*   **Dead Letter Queue (DLQ)**: Kafka topic `flashsale.order.dlq`
+    *   **Alasan**: Alternatif (drop atau retry tanpa batas) keduanya buruk untuk produksi. DLQ menjamin event tidak hilang sekaligus tidak memblokir consumer pipeline.

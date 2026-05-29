@@ -42,3 +42,26 @@ Anda bisa menjalankannya lewat instruksi `Makefile` yang akan kita buat:
 make perf-smoke
 make perf-spike
 ```
+
+## Resilience Testing (Phase 07)
+
+Setelah menerapkan Circuit Breaker, Retry, dan DLQ, tambahkan skenario berikut ke k6:
+
+### Skenario: Circuit Breaker Trip Test
+1. Matikan `inventory-service`: `docker stop flashsale-inventory`
+2. Jalankan thundering herd test
+3. Verifikasi: Setelah ~10 request gagal, respons berubah dari timeout (3s) → langsung 503 (< 50ms)
+4. Restart: `docker start flashsale-inventory`
+5. Verifikasi: Sistem pulih otomatis dalam 5-10 detik (half-open → closed)
+
+### Skenario: DLQ Test
+1. Matikan `order-service`: `docker stop flashsale-order`
+2. Lakukan beberapa checkout
+3. Restart order service — event dari Kafka akan di-reprocess
+4. Verifikasi tabel `processed_events`: tidak ada duplikat
+
+### Skenario: Outbox Retry Test
+1. Matikan Kafka: `docker stop flashsale-kafka`
+2. Lakukan checkout → stok terpotong di Redis, event masuk outbox dengan status PENDING
+3. Restart Kafka: `docker start flashsale-kafka`
+4. Verifikasi: event di-relay ke Kafka dalam beberapa detik (relay worker retry)
