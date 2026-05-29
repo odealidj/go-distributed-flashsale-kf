@@ -37,30 +37,27 @@ Sistem *Flash Sale* terdistribusi (Microservices) yang dirancang secara khusus u
 git clone https://github.com/odealidj/go-distributed-flashsale-kf.git
 cd go-distributed-flashsale-kf
 
-# 2. Jalankan infrastruktur pendukung (DB, Redis, Kafka, Jaeger)
-make infra-up
-
-# 3. Jalankan seluruh microservice (buka terminal terpisah untuk masing-masing perintah)
-cd api-gateway && go run cmd/api-gateway/main.go
-cd product-service && go run cmd/product-service/main.go
-cd inventory-service && go run cmd/inventory-service/main.go
-cd order-service && go run cmd/order-service/main.go
-cd payment-service && go run cmd/payment-service/main.go
+# 2. Menjalankan Keseluruhan Sistem (Infra + Go Microservices)
+make up
 ```
 
-API Gateway akan tersedia di: `http://localhost:8080`
+API Gateway akan otomatis tersedia di: `http://localhost:8080`
 Dashboard Jaeger tersedia di: `http://localhost:16686`
 
 ---
 
 ## Perintah Make
 
+Proyek ini telah dilengkapi dengan sederet *shortcut* `make` untuk mempermudah eksekusi tanpa membebani laptop dengan konfigurasi Docker tambahan untuk *service* Go.
+
 | Perintah | Deskripsi |
 |---|---|
-| `make infra-up` | Jalankan seluruh sistem infrastruktur (Docker Compose) |
-| `make infra-down` | Hentikan infrastruktur pendukung |
-| `make infra-logs` | Tampilkan log beruntun (*tail*) dari infrastruktur Docker |
-| `make proto` | Re-generate kode Go dari seluruh file Protocol Buffers (`.proto`) |
+| `make up` | Menyalakan infrastruktur (*Docker*) lalu menjalan seluruh *microservice* Go di latar belakang. |
+| `make down` | Mematikan *microservice* Go dan mematikan seluruh infrastruktur. |
+| `make infra-up` | **(Mode Debug)** Hanya menyalakan infrastruktur tanpa *microservices*. Gunakan ini saat Anda ingin melakukan *debug* fungsi Go via IDE (VSCode/GoLand). |
+| `make run-all` / `stop-all`| Menyalakan / mematikan seluruh 5 *microservice* Go sekaligus di latar belakang. |
+| `make run-order` | Menyalakan spesifik 1 *service* (contoh: `order-service`). Berlaku juga untuk *service* lainnya. |
+| `make proto` | Me-*recompile* seluruh *file* Protocol Buffers (.proto) menjadi kode Go. |
 
 ---
 
