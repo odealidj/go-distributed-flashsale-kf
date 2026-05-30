@@ -45,3 +45,33 @@ Dokumen ini mendokumentasikan pustaka (*library*) dan teknologi yang dipilih unt
     *   **Alasan**: Tidak perlu library eksternal untuk logika retry sederhana. Exponential backoff dengan jitter ±30% cukup untuk mencegah thundering herd saat recovery.
 *   **Dead Letter Queue (DLQ)**: Kafka topic `flashsale.order.dlq` (untuk Order Consumer) dan `flashsale.inventory.dlq` (untuk Inventory Consumer)
     *   **Alasan**: Alternatif (drop atau retry tanpa batas) keduanya buruk untuk produksi. DLQ menjamin event tidak hilang sekaligus tidak memblokir consumer pipeline.
+
+## 8. Optimasi Kinerja Tinggi (High-Performance Optimizations)
+
+Untuk memastikan sistem mampu menangani beban ekstrem pada saat detik-detik pertama Flash Sale dimulai, beberapa teknik optimasi tingkat lanjut berikut telah diterapkan secara native di dalam kode:
+
+1.  **Dynamic CPU Threading (`go.uber.org/automaxprocs`)**
+    *   **Penerapan**: Diimpor sebagai blank import (`_ "go.uber.org/automaxprocs"`) di setiap berkas `main.go` layanan mikro.
+    *   **Alasan**: Di lingkungan kontainer (seperti Docker/Kubernetes) atau cgroups VPS, Go secara default mendeteksi total CPU fisik *host*, bukan batas CPU kontainer. Hal ini menyebabkan jumlah thread sistem Go terlalu banyak dan memicu persaingan CPU yang hebat (*thread contention*). Library ini mengoreksi nilai `GOMAXPROCS` secara dinamis sesuai alokasi CPU yang didefinisikan kontainer.
+
+2.  **Manajemen Pool Koneksi (Postgres & Redis Connection Pooling)**
+    *   **PostgreSQL**: Dikonfigurasi secara eksplisit menggunakan limit pool koneksi:
+        *   `MaxOpenConns (100)`: Membatasi maksimal koneksi terbuka agar tidak membebani server Postgres.
+        *   `MaxIdleConns (20)`: Mempertahankan 20 koneksi diam yang siap digunakan kembali tanpa biaya jabat tangan TCP ulang.
+        *   `ConnMaxLifetime (30 menit)`: Membersihkan berkala koneksi lama agar terhindar dari kebocoran sumber daya (*resource leaks*).
+    *   **Redis**: Dikonfigurasi dengan `PoolSize: 500` dan `MinIdleConns: 50` di *Inventory Service* untuk mendukung eksekusi cepat ribuan kueri Lua Script per detik tanpa hambatan pembuatan soket baru.
+
+3.  **Kafka Network I/O Compression (Snappy)**
+    *   **Penerapan**: Mengaktifkan kompresi Snappy pada `kgo.Client` di *Outbox Relay Worker* (`shared/pkg/outbox/relay.go`).
+    *   **Alasan**: Kompresi Snappy memberikan keseimbangan luar biasa antara efisiensi CPU dan rasio kompresi. Hal ini mengurangi konsumsi *bandwidth* jaringan hingga 80% saat mengirimkan batch event bisnis berukuran besar ke Kafka, tanpa menurunkan *throughput* CPU.
+
+4.  **Nginx High-Concurrency Connection Reuse (Keepalive)**
+    *   **Penerapan**: Di dalam `nginx.conf`, dikonfigurasi pooling koneksi ke backend upstream:
+        ```nginx
+        upstream gateway {
+            server host.docker.internal:18000;
+            keepalive 100; # Pertahankan 100 koneksi persisten ke API Gateway
+        }
+        ```
+    *   **Alasan**: Meng-upgrade protokol proxy ke HTTP 1.1 dan mempertahankan koneksi persisten (*keep-alive*) mencegah penumpukan soket berstatus `TIME_WAIT` (kehabisan port lokal / *TCP Port Exhaustion*) pada Nginx saat jutaan request masuk bersamaan.
+
