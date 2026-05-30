@@ -42,6 +42,8 @@ func NewRelayWorker(db *sqlx.DB, kafkaBrokers []string, logger log.Logger) (*Rel
 		kgo.SeedBrokers(kafkaBrokers...),
 		// Ack dari semua replika sebelum dianggap sukses (durabilitas)
 		kgo.RequiredAcks(kgo.AllISRAcks()),
+		// Compression: gunakan Snappy untuk efisiensi jaringan & I/O tinggi
+		kgo.ProducerBatchCompression(kgo.SnappyCompression()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("gagal inisialisasi Kafka client: %w", err)

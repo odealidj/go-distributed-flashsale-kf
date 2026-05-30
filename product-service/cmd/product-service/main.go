@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
+
+	_ "go.uber.org/automaxprocs"
 
 	"flashsale/shared/pkg/telemetry"
 	"github.com/go-kratos/kratos/v2"
@@ -70,6 +73,11 @@ func main() {
 	if err != nil {
 		log.NewHelper(logger).Warnf("Gagal terhubung ke database (abaikan sementara karena scaffold): %v", err)
 		// Kita biarkan jalan menggunakan nil db untuk demo dummy data jika postgres belum siap
+	} else {
+		// Konfigurasi TCP Connection Pool Postgres
+		db.SetMaxOpenConns(100)
+		db.SetMaxIdleConns(20)
+		db.SetConnMaxLifetime(30 * time.Minute)
 	}
 
 	// Inject dependensi menggunakan Wire

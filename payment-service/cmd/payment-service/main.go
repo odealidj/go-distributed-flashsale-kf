@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
+
+	_ "go.uber.org/automaxprocs"
 
 	"flashsale/shared/pkg/telemetry"
 	"github.com/go-kratos/kratos/v2/middleware/tracing"
@@ -73,6 +76,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	// Konfigurasi TCP Connection Pool Postgres
+	db.SetMaxOpenConns(100)
+	db.SetMaxIdleConns(20)
+	db.SetConnMaxLifetime(30 * time.Minute)
 
 	// 2. Setup Server menggunakan Wire
 	paymentServer := InitializePaymentServer(db)

@@ -7,6 +7,9 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
+
+	_ "go.uber.org/automaxprocs"
 
 	"flashsale/shared/pkg/telemetry"
 	"github.com/go-kratos/kratos/v2/log"
@@ -73,6 +76,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	// Konfigurasi TCP Connection Pool Postgres
+	db.SetMaxOpenConns(100)
+	db.SetMaxIdleConns(20)
+	db.SetConnMaxLifetime(30 * time.Minute)
 
 	// 2. Init Dependencies Manual (tanpa Wire agar cepat untuk worker)
 	repo := postgres.NewOrderRepository(db, logger)

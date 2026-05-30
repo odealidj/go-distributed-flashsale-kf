@@ -84,3 +84,13 @@ Melalui *Makefile* di Root:
    make up
    ```
    *(Menjalankan semua aplikasi Go secara paralel menggunakan script `run_all.sh` atau Makefile command di host).*
+
+## 5. Pertimbangan Skala Produksi (Scaling & PgBouncer)
+
+Di lingkungan produksi yang skalanya jauh lebih besar (misalnya saat dideploy ke Alibaba Cloud dengan replikasi microservices/autoscaling):
+
+*   **Tantangan Koneksi Database:** Setiap instance microservices Go yang berjalan akan membuka *connection pool* ke PostgreSQL. Jika sistem melakukan *autoscaling* menjadi puluhan atau ratusan kontainer, jumlah koneksi fisik ke Postgres akan melonjak ekstrem dan melampaui `max_connections` di Postgres, yang menyebabkan degradasi performa atau penolakan koneksi.
+*   **Solusi PgBouncer:** Sangat direkomendasikan untuk menempatkan **PgBouncer** (sebuah *lightweight connection pooler*) di depan PostgreSQL.
+    *   Microservices Go akan diarahkan ke port PgBouncer (default: `6432`).
+    *   PgBouncer akan mengelola ribuan koneksi masuk dari aplikasi Go dan memetakan koneksi tersebut (*connection multiplexing*) ke jumlah koneksi fisik yang jauh lebih sedikit ke PostgreSQL server secara efisien.
+

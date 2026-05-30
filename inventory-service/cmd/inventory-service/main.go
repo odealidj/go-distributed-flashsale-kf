@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
+
+	_ "go.uber.org/automaxprocs"
 
 	"flashsale/shared/pkg/outbox"
 	"flashsale/shared/pkg/telemetry"
@@ -74,6 +77,11 @@ func main() {
 	db, err := sqlx.Connect("postgres", dbDSN)
 	if err != nil {
 		log.NewHelper(logger).Warnf("Gagal terhubung ke Postgres (abaikan untuk scaffold): %v", err)
+	} else {
+		// Konfigurasi TCP Connection Pool Postgres
+		db.SetMaxOpenConns(100)
+		db.SetMaxIdleConns(20)
+		db.SetConnMaxLifetime(30 * time.Minute)
 	}
 
 	// 2. Inisialisasi Redis
@@ -90,10 +98,13 @@ func main() {
 		redisAddr = fmt.Sprintf("%s:%s", redisHost, redisPort)
 	}
 
+	// Inisialisasi Redis dengan Connection Pool optimized
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     redisAddr,
-		Password: "", // no password set
-		DB:       0,  // use default DB
+		Addr:         redisAddr,
+		Password:     "", // no password set
+		DB:           0,  // use default DB
+		PoolSize:     500,
+		MinIdleConns: 50,
 	})
 	if err := rdb.Ping(context.Background()).Err(); err != nil {
 		log.NewHelper(logger).Warnf("Gagal terhubung ke Redis (abaikan untuk scaffold): %v", err)
