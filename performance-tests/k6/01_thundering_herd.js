@@ -56,6 +56,16 @@ export default function () {
     tags: { scenario: 'thundering_herd' },
   };
 
+  // 1. Skenario Realistis Langkah 1: Pengguna melihat halaman produk (Browse) sebelum checkout
+  const browseRes = http.get(`${BASE_URL}/api/v1/products?page=1&per_page=10`, params);
+  check(browseRes, {
+    'browse products status 200': (r) => r.status === 200,
+  });
+
+  // Simulasi "Think Time" singkat (20ms - 100ms) sebelum menekan tombol "Beli"
+  sleep(Math.random() * 0.08 + 0.02);
+
+  // 2. Skenario Realistis Langkah 2: Pengguna menekan tombol checkout (Buy)
   const startTime = Date.now();
   const res = http.post(`${BASE_URL}/api/v1/checkout`, payload, params);
   const duration = Date.now() - startTime;
@@ -87,7 +97,7 @@ export default function () {
     console.warn(`Unexpected status ${res.status}: ${res.body}`);
   }
 
-  // Jangan sleep terlalu lama - simulasi tekanan agresif
+  // Jeda sangat kecil antar iterasi
   sleep(Math.random() * 0.1);
 }
 

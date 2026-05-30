@@ -23,7 +23,7 @@ func NewReserveStockUsecase(redis port.RedisPort, outbox port.OutboxPort) *Reser
 // Execute menjalankan Saga penguncian stok.
 // 1. Potong di Redis secara atomik (Lua Script).
 // 2. Jika sukses, catat event "StockReserved" ke Outbox Postgres.
-func (uc *ReserveStockUsecase) Execute(ctx context.Context, productID string, userID string, eventID string) error {
+func (uc *ReserveStockUsecase) Execute(ctx context.Context, productID string, userID string, eventID string, quantity int) error {
 	// 1. Eksekusi Redis Lua Script
 	success, err := uc.redisPort.ReserveStock(ctx, productID, eventID)
 	if err != nil {
@@ -33,6 +33,11 @@ func (uc *ReserveStockUsecase) Execute(ctx context.Context, productID string, us
 		return errors.New("stok habis atau event idempotency gagal") // Domain error (HTTP 409)
 	}
 
+	price := int64(150000)
+	if productID == "prod_2" {
+		price = 99000
+	}
+
 	// 2. Simpan ke Postgres Outbox (Transactional)
 	// Payload JSON untuk Kafka
 	payload := map[string]interface{}{
@@ -40,6 +45,8 @@ func (uc *ReserveStockUsecase) Execute(ctx context.Context, productID string, us
 		"product_id": productID,
 		"user_id":    userID,
 		"status":     "RESERVED",
+		"quantity":   quantity,
+		"price":      price,
 	}
 	payloadBytes, _ := json.Marshal(payload)
 

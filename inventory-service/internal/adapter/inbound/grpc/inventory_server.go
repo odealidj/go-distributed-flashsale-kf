@@ -19,7 +19,11 @@ func NewInventoryServer(uc *usecase.ReserveStockUsecase) *InventoryServer {
 }
 
 func (s *InventoryServer) ReserveStock(ctx context.Context, req *pb.ReserveStockRequest) (*pb.ReserveStockResponse, error) {
-	err := s.usecase.Execute(ctx, req.GetProductId(), req.GetUserId(), req.GetIdempotencyKey())
+	qty := req.GetQuantity()
+	if qty <= 0 {
+		qty = 1
+	}
+	err := s.usecase.Execute(ctx, req.GetProductId(), req.GetUserId(), req.GetIdempotencyKey(), int(qty))
 	if err != nil {
 		return &pb.ReserveStockResponse{
 			Success: false,
