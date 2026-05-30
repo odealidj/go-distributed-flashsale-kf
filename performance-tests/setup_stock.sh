@@ -16,10 +16,11 @@ echo "   Redis    : ${REDIS_HOST}:${REDIS_PORT}"
 echo "   ProductID: ${PRODUCT_ID}"
 echo "   Stok Awal: ${INITIAL_STOCK} unit"
 
-# Set stok di Redis
-redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" SET "stock:${PRODUCT_ID}" "$INITIAL_STOCK"
+# Reset dan set stok di Redis via kontainer Docker
+docker exec -i flashsale-redis redis-cli FLUSHALL
+docker exec -i flashsale-redis redis-cli SET "stock:${PRODUCT_ID}" "$INITIAL_STOCK"
 
 echo "✅ Stok berhasil di-set: stock:${PRODUCT_ID} = ${INITIAL_STOCK}"
 echo ""
 echo "📊 Verifikasi stok:"
-redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" GET "stock:${PRODUCT_ID}"
+docker exec -i flashsale-redis redis-cli GET "stock:${PRODUCT_ID}"

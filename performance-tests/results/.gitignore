@@ -1,0 +1,5 @@
+# Mengabaikan file trace K6 mentah yang berukuran gigabytes
+*.json
+
+# Tetap melacak file summary kecil hasil pengujian
+!*_summary.json

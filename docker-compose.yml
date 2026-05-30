@@ -115,6 +115,157 @@ services:
     networks:
       - flashsale_net
 
+  # ----------------------------------------------------
+  # 7. GO SERVICES (API GATEWAY & BACKENDS)
+  # ----------------------------------------------------
+  api-gateway:
+    build:
+      context: .
+      dockerfile: ./api-gateway/Dockerfile
+    container_name: flashsale-api-gateway
+    profiles: ["app"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    ports:
+      - "${API_GATEWAY_PORT:-18000}:8000"
+    environment:
+      - APP_ENV=development
+      - API_GATEWAY_PORT=8000
+      - PRODUCT_SERVICE_ENDPOINT=product-service:9001
+      - INVENTORY_SERVICE_ENDPOINT=inventory-service:9002
+      - PAYMENT_SERVICE_ENDPOINT=payment-service:9003
+      - JAEGER_HOST=jaeger
+      - JAEGER_OTLP_GRPC_PORT=4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    networks:
+      - flashsale_net
+
+  product-service:
+    build:
+      context: .
+      dockerfile: ./product-service/Dockerfile
+    container_name: flashsale-product-service
+    profiles: ["app"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${PRODUCT_SERVICE_PORT:-19001}:9001"
+    environment:
+      - APP_ENV=development
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-root}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-rootpassword}
+      - POSTGRES_DB=db_product
+      - DATABASE_URL=postgres://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-rootpassword}@postgres:5432/db_product?sslmode=disable
+      - PRODUCT_SERVICE_PORT=9001
+      - JAEGER_HOST=jaeger
+      - JAEGER_OTLP_GRPC_PORT=4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    networks:
+      - flashsale_net
+
+  inventory-service:
+    build:
+      context: .
+      dockerfile: ./inventory-service/Dockerfile
+    container_name: flashsale-inventory-service
+    profiles: ["app"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    ports:
+      - "${INVENTORY_SERVICE_PORT:-19002}:9002"
+    environment:
+      - APP_ENV=development
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-root}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-rootpassword}
+      - POSTGRES_DB=db_inventory
+      - DATABASE_URL=postgres://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-rootpassword}@postgres:5432/db_inventory?sslmode=disable
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_ADDR=redis:6379
+      - INVENTORY_SERVICE_PORT=9002
+      - KAFKA_HOST=kafka
+      - KAFKA_EXTERNAL_PORT=9092
+      - KAFKA_BROKERS=kafka:9092
+      - JAEGER_HOST=jaeger
+      - JAEGER_OTLP_GRPC_PORT=4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    networks:
+      - flashsale_net
+
+  order-service:
+    build:
+      context: .
+      dockerfile: ./order-service/Dockerfile
+    container_name: flashsale-order-service
+    profiles: ["app"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    environment:
+      - APP_ENV=development
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-root}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-rootpassword}
+      - POSTGRES_DB=db_order
+      - DATABASE_URL=postgres://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-rootpassword}@postgres:5432/db_order?sslmode=disable
+      - KAFKA_HOST=kafka
+      - KAFKA_EXTERNAL_PORT=9092
+      - KAFKA_BROKERS=kafka:9092
+      - JAEGER_HOST=jaeger
+      - JAEGER_OTLP_GRPC_PORT=4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    networks:
+      - flashsale_net
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: ./payment-service/Dockerfile
+    container_name: flashsale-payment-service
+    profiles: ["app"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    ports:
+      - "${PAYMENT_SERVICE_PORT:-19003}:9003"
+    environment:
+      - APP_ENV=development
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-root}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-rootpassword}
+      - POSTGRES_DB=db_payment
+      - DATABASE_URL=postgres://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-rootpassword}@postgres:5432/db_payment?sslmode=disable
+      - PAYMENT_SERVICE_PORT=9003
+      - KAFKA_HOST=kafka
+      - KAFKA_EXTERNAL_PORT=9092
+      - KAFKA_BROKERS=kafka:9092
+      - JAEGER_HOST=jaeger
+      - JAEGER_OTLP_GRPC_PORT=4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    networks:
+      - flashsale_net
+
 volumes:
   pgdata:
   kafkadata:

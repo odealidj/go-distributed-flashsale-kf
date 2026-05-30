@@ -26,9 +26,12 @@ func (uc *GatewayUsecase) GetProducts(ctx context.Context, page, perPage int32) 
 	return uc.productClient.ListFlashSaleProducts(ctx, page, perPage)
 }
 
-func (uc *GatewayUsecase) Checkout(ctx context.Context, userID, productID string) (string, bool, error) {
-	// 1. Generate Idempotency Key / Trace ID (Untuk keperluan Saga)
-	eventID := uuid.New().String()
+func (uc *GatewayUsecase) Checkout(ctx context.Context, userID, productID string, idempKey string) (string, bool, error) {
+	// 1. Gunakan Idempotency Key dari client atau generate UUID baru jika kosong
+	eventID := idempKey
+	if eventID == "" {
+		eventID = uuid.New().String()
+	}
 
 	// 2. Hubungi Inventory Service untuk reservasi stok secara synchronous
 	// Jika berhasil, Inventory akan emit event Kafka ke Order Service secara asynchronous

@@ -89,7 +89,9 @@ func RegisterHTTPServer(srv *kratoshttp.Server, uc *usecase.GatewayUsecase, logg
 			})
 		}
 
-		eventID, success, err := uc.Checkout(ctx, userID, req.ProductID)
+		idempKey := ctx.Request().Header.Get("X-Idempotency-Key")
+
+		eventID, success, err := uc.Checkout(ctx, userID, req.ProductID, idempKey)
 		if err != nil || !success {
 			return ctx.JSON(http.StatusConflict, Response{
 				Meta: Meta{TraceID: traceID, EventID: eventID, Message: "stok habis atau sedang diproses"},

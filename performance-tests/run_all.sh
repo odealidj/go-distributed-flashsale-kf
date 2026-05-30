@@ -9,16 +9,18 @@ set -e
 
 PRODUCT_ID="${PRODUCT_ID:-product-flashsale-001}"
 INITIAL_STOCK="${INITIAL_STOCK:-100}"
-BASE_URL="${BASE_URL:-http://localhost:8000}"
+BASE_URL="${BASE_URL:-http://localhost:18081}"
+DIRECT_BASE_URL="${DIRECT_BASE_URL:-http://localhost:18000}"
 
 mkdir -p results
 
 echo "============================================="
 echo "  FLASH SALE PERFORMANCE TEST SUITE"
 echo "============================================="
-echo "  BASE_URL     : $BASE_URL"
-echo "  PRODUCT_ID   : $PRODUCT_ID"
-echo "  INITIAL_STOCK: $INITIAL_STOCK"
+echo "  BASE_URL        : $BASE_URL"
+echo "  DIRECT_BASE_URL : $DIRECT_BASE_URL"
+echo "  PRODUCT_ID      : $PRODUCT_ID"
+echo "  INITIAL_STOCK   : $INITIAL_STOCK"
 echo "============================================="
 echo ""
 
@@ -36,13 +38,13 @@ k6 run \
 echo ""
 
 # ── Skenario 2: Idempotency ──
-echo "🔄 [2/3] Idempotency Test..."
-echo "   Reset stok = 999999 (unlimited agar fokus pada idempotency)"
+echo "🔄 [2/3] Idempotency Test (Menggunakan DIRECT_BASE_URL untuk bypass rate limiter)..."
+echo "   Setup stok = 999999 (unlimited agar fokus pada idempotency)"
 INITIAL_STOCK_BACKUP=$INITIAL_STOCK
 INITIAL_STOCK=999999 bash setup_stock.sh
 
 k6 run \
-  --env BASE_URL="$BASE_URL" \
+  --env BASE_URL="$DIRECT_BASE_URL" \
   --env PRODUCT_ID="$PRODUCT_ID" \
   --out json=results/idempotency.json \
   k6/02_idempotency_test.js

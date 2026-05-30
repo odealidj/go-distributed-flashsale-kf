@@ -25,7 +25,7 @@ local amount = tonumber(ARGV[1])
 
 -- Cek Idempotency
 if redis.call("EXISTS", idemp_key) == 1 then
-    return 1 -- Sudah pernah diproses, return success
+    return 0 -- Sudah pernah diproses (duplicate), return rejection
 end
 
 -- Cek Stok
