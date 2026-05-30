@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"strings"
+
 	"flashsale/shared/pkg/telemetry"
 	"github.com/go-kratos/kratos/v2/middleware/tracing"
-	"os"
 
 	"github.com/go-kratos/kratos/v2"
 	"github.com/go-kratos/kratos/v2/log"
@@ -17,8 +20,22 @@ import (
 )
 
 func main() {
+	// Construct Jaeger OTLP Endpoint
+	jaegerEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	if jaegerEndpoint == "" {
+		jaegerHost := os.Getenv("JAEGER_HOST")
+		if jaegerHost == "" {
+			jaegerHost = "localhost"
+		}
+		jaegerPort := os.Getenv("JAEGER_OTLP_GRPC_PORT")
+		if jaegerPort == "" {
+			jaegerPort = "14317"
+		}
+		jaegerEndpoint = jaegerHost + ":" + jaegerPort
+	}
+
 	// Init Tracer
-	tp, err := telemetry.InitTracer(context.Background(), "payment-service", "localhost:4317")
+	tp, err := telemetry.InitTracer(context.Background(), "payment-service", jaegerEndpoint)
 	if err != nil {
 		panic(err)
 	}
@@ -34,7 +51,23 @@ func main() {
 	// 1. Setup Postgres
 	dbDSN := os.Getenv("DATABASE_URL")
 	if dbDSN == "" {
-		dbDSN = "host=localhost user=postgres password=postgres dbname=flashsale port=5432 sslmode=disable"
+		dbHost := os.Getenv("DB_HOST")
+		if dbHost == "" {
+			dbHost = "localhost"
+		}
+		dbUser := os.Getenv("POSTGRES_USER")
+		if dbUser == "" {
+			dbUser = "root"
+		}
+		dbPassword := os.Getenv("POSTGRES_PASSWORD")
+		if dbPassword == "" {
+			dbPassword = "rootpassword"
+		}
+		dbPort := os.Getenv("DB_PORT")
+		if dbPort == "" {
+			dbPort = "15432"
+		}
+		dbDSN = fmt.Sprintf("host=%s user=%s password=%s dbname=db_payment port=%s sslmode=disable", dbHost, dbUser, dbPassword, dbPort)
 	}
 	db, err := sqlx.Connect("postgres", dbDSN)
 	if err != nil {
@@ -44,16 +77,38 @@ func main() {
 	// 2. Setup Server menggunakan Wire
 	paymentServer := InitializePaymentServer(db)
 
+	paymentPort := os.Getenv("PAYMENT_SERVICE_PORT")
+	if paymentPort == "" {
+		paymentPort = "19003"
+	}
+
 	// 3. Setup gRPC Server Kratos
 	grpcServer := kratosgrpc.NewServer(
-		kratosgrpc.Address(":9003"),
+		kratosgrpc.Address(":" + paymentPort),
 		kratosgrpc.Logger(logger),
 		kratosgrpc.Middleware(tracing.Server()),
 	)
 	pb.RegisterPaymentServiceServer(grpcServer, paymentServer)
 
+	// Construct Kafka Brokers
+	kafkaBrokersStr := os.Getenv("KAFKA_BROKERS")
+	var kafkaBrokers []string
+	if kafkaBrokersStr != "" {
+		kafkaBrokers = strings.Split(kafkaBrokersStr, ",")
+	} else {
+		kafkaHost := os.Getenv("KAFKA_HOST")
+		if kafkaHost == "" {
+			kafkaHost = "localhost"
+		}
+		kafkaPort := os.Getenv("KAFKA_EXTERNAL_PORT")
+		if kafkaPort == "" {
+			kafkaPort = "19094"
+		}
+		kafkaBrokers = []string{fmt.Sprintf("%s:%s", kafkaHost, kafkaPort)}
+	}
+
 	// 4. Jalankan Outbox Relay Worker di Background
-	relay, err := outbox.NewRelayWorker(db, []string{"localhost:9092"}, logger)
+	relay, err := outbox.NewRelayWorker(db, kafkaBrokers, logger)
 	if err == nil {
 		go relay.Start(context.Background(), "flashsale.payment.events")
 	} else {

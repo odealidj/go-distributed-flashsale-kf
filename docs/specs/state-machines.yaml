@@ -4,23 +4,18 @@
 state_machines:
   order_fsm:
     name: Order State Machine
-    initial_state: PENDING_PAYMENT
+    initial_state: PENDING
     terminal_states: [PAID, CANCELLED]
     transitions:
-      - from: PENDING_PAYMENT
+      - from: PENDING
         to: PAID
         trigger: PaymentCompletedEvent
-        description: "Pengguna berhasil melakukan pembayaran."
-      
-      - from: PENDING_PAYMENT
-        to: CANCELLED
-        trigger: PaymentTimeout / OrderCancelledEvent
-        description: "Batas waktu 15 menit berakhir tanpa pembayaran yang dikonfirmasi."
+        description: "Pembayaran berhasil diproses oleh Payment Service."
 
-      - from: PAID
-        to: REFUNDED
-        trigger: RefundRequested
-        description: "(Opsional) Refund dilakukan oleh admin."
+      - from: PENDING
+        to: CANCELLED
+        trigger: PaymentFailedEvent / PaymentTimeout
+        description: "Pembayaran gagal atau batas waktu berakhir tanpa pembayaran yang dikonfirmasi."
 
   inventory_fsm:
     name: Inventory Item State Machine (Logical)
@@ -30,7 +25,7 @@ state_machines:
         to: RESERVED
         trigger: ReserveStockCommand
         description: "User menekan beli, Redis memotong stok dan DB mengunci (soft lock)."
-      
+
       - from: RESERVED
         to: DEDUCTED
         trigger: PaymentCompletedEvent

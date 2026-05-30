@@ -1,3 +1,8 @@
+ifneq (,$(wildcard ./.env))
+    include .env
+    export
+endif
+
 .PHONY: infra-up infra-down infra-logs proto
 .PHONY: run-api-gateway run-product run-inventory run-order run-payment
 .PHONY: stop-api-gateway stop-product stop-inventory stop-order stop-payment
@@ -21,12 +26,14 @@ infra-logs:
 
 
 # ==============================================================================
-# MICROSERVICES (Go Run Background)
+# MICROSERVICES (Go Build and Run Background)
 # ==============================================================================
 
 run-api-gateway:
+	@echo "Building API Gateway..."
+	@go build -o bin/api-gateway ./api-gateway/cmd/api-gateway
 	@echo "Starting API Gateway..."
-	@nohup go run api-gateway/cmd/api-gateway/main.go > api-gateway.log 2>&1 & echo $$! > api-gateway.pid
+	@nohup ./bin/api-gateway > api-gateway.log 2>&1 & echo $$! > api-gateway.pid
 	@echo "API Gateway started."
 
 stop-api-gateway:
@@ -35,8 +42,10 @@ stop-api-gateway:
 	@rm -f api-gateway.pid
 
 run-product:
+	@echo "Building Product Service..."
+	@go build -o bin/product-service ./product-service/cmd/product-service
 	@echo "Starting Product Service..."
-	@nohup go run product-service/cmd/product-service/main.go > product.log 2>&1 & echo $$! > product.pid
+	@nohup ./bin/product-service > product.log 2>&1 & echo $$! > product.pid
 	@echo "Product Service started."
 
 stop-product:
@@ -45,8 +54,10 @@ stop-product:
 	@rm -f product.pid
 
 run-inventory:
+	@echo "Building Inventory Service..."
+	@go build -o bin/inventory-service ./inventory-service/cmd/inventory-service
 	@echo "Starting Inventory Service..."
-	@nohup go run inventory-service/cmd/inventory-service/main.go > inventory.log 2>&1 & echo $$! > inventory.pid
+	@nohup ./bin/inventory-service > inventory.log 2>&1 & echo $$! > inventory.pid
 	@echo "Inventory Service started."
 
 stop-inventory:
@@ -55,8 +66,10 @@ stop-inventory:
 	@rm -f inventory.pid
 
 run-order:
+	@echo "Building Order Service..."
+	@go build -o bin/order-service ./order-service/cmd/order-service
 	@echo "Starting Order Service..."
-	@nohup go run order-service/cmd/order-service/main.go > order.log 2>&1 & echo $$! > order.pid
+	@nohup ./bin/order-service > order.log 2>&1 & echo $$! > order.pid
 	@echo "Order Service started."
 
 stop-order:
@@ -65,8 +78,10 @@ stop-order:
 	@rm -f order.pid
 
 run-payment:
+	@echo "Building Payment Service..."
+	@go build -o bin/payment-service ./payment-service/cmd/payment-service
 	@echo "Starting Payment Service..."
-	@nohup go run payment-service/cmd/payment-service/main.go > payment.log 2>&1 & echo $$! > payment.pid
+	@nohup ./bin/payment-service > payment.log 2>&1 & echo $$! > payment.pid
 	@echo "Payment Service started."
 
 stop-payment:

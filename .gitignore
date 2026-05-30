@@ -1,0 +1,22 @@
+# Environment variables (secrets)
+.env
+
+# Logs and PIDs
+*.log
+*.pid
+
+# System files
+.DS_Store
+Thumbs.db
+node_modules/
+
+# Go binaries and temporary files
+/dist/
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out

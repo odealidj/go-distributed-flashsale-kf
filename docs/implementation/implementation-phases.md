@@ -7,16 +7,16 @@ Dokumen ini membagi pekerjaan pembuatan 5 *microservices* + API Gateway untuk si
 Sebuah fase dianggap selesai jika:
 *   Kode mengikuti *Hexagonal Architecture*.
 *   REST Response API Gateway mengikuti `docs/api/response-standard.md`.
-*   Operasi database tidak lagi menggunakan `sqlc`, melainkan di-mapping manual dengan `sqlx`.
-*   Semua perubahan berhasil dijalankan secara lokal via `docker-compose`.
+*   Operasi database menggunakan `sqlx` untuk *struct scanning* dengan raw SQL.
+*   Semua perubahan berhasil dijalankan secara lokal via `docker-compose` (infra) + `go run` (services).
 
 ---
 
 ## 3. Fase 01 - Fondasi Monorepo & Infrastruktur
 **Target:** Menyiapkan kerangka kerja kosong namun bisa di-*build*.
-*   Inisialisasi `go.work` di root dan `go.mod` di 5 service (`api-gateway`, `inventory-service`, `order-service`, `payment-service`, `product-service`) plus `shared`.
-*   Membuat `docker-compose.yml` untuk PostgreSQL, Redis, Kafka (dengan Kafka UI), Jaeger, dan Reverse Proxy (Traefik/NGINX).
-*   Menyiapkan skrip migrasi awal.
+*   Inisialisasi `go.work` di root dan `go.mod` di 5 service (`api-gateway`, `inventory-service`, `order-service`, `payment-service`, `product-service`) plus `shared` dan `proto`.
+*   Membuat `docker-compose.yml` untuk PostgreSQL, Redis, Kafka (dengan Kafka UI), Jaeger, dan Reverse Proxy (NGINX).
+*   Menyiapkan skrip inisialisasi database (`init.sql`) di root proyek.
 *   Membuat *proto files* (gRPC contracts) untuk semua komunikasi internal.
 
 ## 4. Fase 02 - Katalog Produk & Inventory (Core Flash Sale)
@@ -27,8 +27,8 @@ Sebuah fase dianggap selesai jika:
 
 ## 5. Fase 03 - API Gateway & Reverse Proxy
 **Target:** Menyediakan satu pintu masuk terpusat untuk klien eksternal.
-*   Setup *Reverse Proxy* (Traefik/NGINX) untuk *rate-limiting*.
-*   **API Gateway:** Membuat BFF (*Backend for Frontend*) menggunakan Go. Menerima *request HTTP REST*, memvalidasi Auth (opsional), lalu mengonversinya menjadi panggilan `gRPC` ke *Product Service* dan *Inventory Service*.
+*   Setup *Reverse Proxy* (NGINX) untuk *rate-limiting* (`limit_req_zone` 10 req/s per IP, burst 20).
+*   **API Gateway:** Membuat BFF (*Backend for Frontend*) menggunakan Go (Kratos). Menerima *request HTTP REST*, memvalidasi Auth (opsional), lalu mengonversinya menjadi panggilan `gRPC` ke *Product Service* dan *Inventory Service*.
 *   Format response di-standarisasi di sini.
 
 ## 6. Fase 04 - Order Core & Payment (Saga Choreography)
@@ -39,12 +39,12 @@ Sebuah fase dianggap selesai jika:
 
 ## 7. Fase 05 - Observability (Tracing & Idempotency)
 **Target:** Mencegah masalah sistem terdistribusi (duplikasi pesan & sulit dilacak).
-*   Penerapan *Idempotency Key* di setiap *Kafka Consumer* (menggunakan tabel `inbox_messages` di Postgres) agar tidak ada pesanan ganda jika Kafka mengirim ulang pesan (at-least-once delivery).
+*   Penerapan *Idempotency Key* di setiap *Kafka Consumer* (menggunakan tabel `processed_events` di Postgres) agar tidak ada pesanan ganda jika Kafka mengirim ulang pesan (at-least-once delivery).
 *   Injeksi *OpenTelemetry* Trace ID dari API Gateway, diteruskan ke Metadata gRPC, hingga masuk ke Header Kafka agar satu *checkout* bisa divisualisasikan dari ujung ke ujung di Jaeger.
 
 ## 8. Fase 06 - Performance Testing (K6)
 **Target:** Membuktikan arsitektur tahan menghadapi *Thundering Herd Problem*.
-*   Membuat *script* k6 di folder `scripts/` untuk mensimulasikan 10,000 *concurrent users* mencoba membeli 100 stok barang dalam detik yang sama.
+*   Membuat *script* k6 di folder `performance-tests/k6/` untuk mensimulasikan ratusan *concurrent users* mencoba membeli stok barang terbatas dalam detik yang sama.
 *   Verifikasi bahwa *Redis Lua Script* sukses mencegah stok minus (*overselling*).
 *   Verifikasi bahwa *API Gateway* dapat merespons di bawah 200ms meskipun Kafka di-*backend* sibuk memproses pesanan secara asinkron.
 
@@ -119,3 +119,22 @@ Sebuah fase dianggap selesai jika:
 |---------|--------|
 | `ReserveStock` (gRPC) | Non-idempoten untuk stok. Idempotency via Redis event_id. |
 | Parsing payload Kafka | Permanent error — payload corrupt tidak akan sembuh dengan retry. |
+
+---
+
+## 10. Fase 08 - Saga Compensation (Unhappy Path)
+**Target:** Melengkapi siklus transaksi untuk sisi kegagalan (*Unhappy Path*).
+*   **Payment Service:** Mensimulasikan kegagalan pembayaran jika `amount % 10 == 4`. Menerbitkan `PaymentFailedEvent` ke Outbox.
+*   **Order Service (Saga):** Menangani `PaymentFailedEvent` → set status `CANCELLED` dan menerbitkan `OrderCancelledEvent`.
+*   **Order Service (Timeout Worker):** Goroutine ticker setiap 30 detik yang membatalkan pesanan `PENDING` > 15 menit menggunakan `FOR UPDATE SKIP LOCKED`.
+*   **Inventory Service (Consumer):** Kafka Consumer baru mendengarkan `flashsale.order.events`. Jika menerima `OrderCancelledEvent`, mengembalikan stok via Redis Lua Script (`RefundStockScript`: INCRBY + DEL idempotency key).
+*   Consumer dilengkapi DLQ (`flashsale.inventory.dlq`) dan Exponential Backoff Retry.
+
+## 11. Fase 09 - Automated Testing & CI Pipeline
+**Target:** Menambahkan *Unit Test* terotomasi dan *Continuous Integration*.
+*   **Unit Testing:** Menggunakan `testify` untuk asersi dan *mocking* (pola AAA: Arrange-Act-Assert).
+    *   `ProcessPaymentUsecase` — Skenario Sukses dan Gagal.
+    *   `OrderSagaUsecase` — HandleStockReserved, HandlePaymentCompleted, HandlePaymentFailed.
+*   **Mock Repository:** Manual mock menggunakan `testify/mock` untuk `OrderRepository` dan `PaymentRepository`.
+*   **CI Pipeline:** GitHub Actions (`.github/workflows/ci.yml`) yang menjalankan `golangci-lint` dan `go test -cover` pada setiap `push` dan `pull_request`.
+

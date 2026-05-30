@@ -2,35 +2,55 @@ asyncapi: 3.0.0
 info:
   title: Flash Sale Event Contracts
   version: 1.0.0
-  description: Definisi event Kafka untuk Saga Choreography Flash Sale.
+  description: >
+    Definisi kontrak event Kafka untuk Saga Choreography sistem Flash Sale.
+    Semua event dipublikasikan melalui pola Transactional Outbox (simpan ke tabel
+    outbox_messages di PostgreSQL, lalu di-relay ke Kafka oleh Outbox Relay Worker).
+
 servers:
   development:
     host: localhost:9092
     protocol: kafka
+    description: Kafka broker lokal (KRaft mode, tanpa Zookeeper).
+
 channels:
   flashsale.inventory.events:
     address: flashsale.inventory.events
+    description: >
+      Topic untuk event yang diterbitkan oleh Inventory Service.
+      Dikonsumsi oleh Order Service.
     messages:
       StockReservedEvent:
         $ref: '#/components/messages/StockReservedEvent'
+
   flashsale.payment.events:
     address: flashsale.payment.events
+    description: >
+      Topic untuk event yang diterbitkan oleh Payment Service.
+      Dikonsumsi oleh Order Service.
     messages:
       PaymentCompletedEvent:
         $ref: '#/components/messages/PaymentCompletedEvent'
       PaymentFailedEvent:
         $ref: '#/components/messages/PaymentFailedEvent'
+
   flashsale.order.events:
     address: flashsale.order.events
+    description: >
+      Topic untuk event yang diterbitkan oleh Order Service.
+      Dikonsumsi oleh Inventory Service (untuk rilis stok saat cancel).
     messages:
       OrderCancelledEvent:
         $ref: '#/components/messages/OrderCancelledEvent'
+
 components:
   messages:
     StockReservedEvent:
       name: StockReservedEvent
       title: Stock Reserved Event
-      summary: Diterbitkan oleh Inventory saat berhasil mengunci stok di Redis.
+      summary: >
+        Diterbitkan oleh Inventory Service saat berhasil mengunci stok di Redis
+        secara atomik (Lua Script). Disimpan ke outbox lalu di-relay ke Kafka.
       payload:
         type: object
         required:
@@ -42,19 +62,28 @@ components:
         properties:
           event_id:
             type: string
+            format: uuid
             description: UUID event, digunakan sebagai Idempotency Key di Order Service.
           user_id:
             type: string
+            description: ID pengguna yang melakukan checkout.
           product_id:
             type: string
+            description: ID produk yang di-reserve.
           quantity:
             type: integer
+            description: Jumlah stok yang di-reserve.
           price:
             type: integer
+            format: int64
+            description: Harga satuan produk, digunakan untuk menghitung total amount di Order.
+
     PaymentCompletedEvent:
       name: PaymentCompletedEvent
       title: Payment Completed Event
-      summary: Diterbitkan oleh Payment saat pembayaran sukses.
+      summary: >
+        Diterbitkan oleh Payment Service saat pembayaran berhasil diproses.
+        Order Service akan mengubah status order menjadi PAID.
       payload:
         type: object
         required:
@@ -64,31 +93,51 @@ components:
         properties:
           event_id:
             type: string
+            format: uuid
           order_id:
             type: string
+            description: ID order yang telah dibayar.
           amount:
             type: integer
+            format: int64
+            description: Nominal pembayaran.
+
     PaymentFailedEvent:
       name: PaymentFailedEvent
       title: Payment Failed Event
-      summary: Diterbitkan oleh Payment saat webhook dari bank mengabarkan kegagalan.
+      summary: >
+        Diterbitkan oleh Payment Service saat pembayaran gagal.
+        Order Service akan membatalkan order dan menerbitkan OrderCancelledEvent
+        sebagai kompensasi untuk merilis stok.
       payload:
         type: object
         required:
           - event_id
           - order_id
+          - amount
           - reason
         properties:
           event_id:
             type: string
+            format: uuid
           order_id:
             type: string
+            description: ID order yang pembayarannya gagal.
+          amount:
+            type: integer
+            format: int64
+            description: Nominal pembayaran yang gagal.
           reason:
             type: string
+            description: Alasan kegagalan pembayaran.
+
     OrderCancelledEvent:
       name: OrderCancelledEvent
       title: Order Cancelled Event
-      summary: Diterbitkan oleh Order jika pembayaran tidak dilakukan dalam 15 menit. Inventory wajib mendengar ini untuk merilis stok.
+      summary: >
+        Diterbitkan oleh Order Service saat pesanan dibatalkan (baik karena timeout
+        15 menit maupun karena pembayaran gagal). Inventory Service wajib mendengar
+        event ini untuk merilis stok yang sudah di-reserve di Redis.
       payload:
         type: object
         required:
@@ -96,12 +145,20 @@ components:
           - order_id
           - product_id
           - quantity
+          - reason
         properties:
           event_id:
             type: string
+            format: uuid
           order_id:
             type: string
+            description: ID order yang dibatalkan.
           product_id:
             type: string
+            description: ID produk yang stoknya perlu dirilis.
           quantity:
             type: integer
+            description: Jumlah stok yang harus dikembalikan ke Redis.
+          reason:
+            type: string
+            description: Alasan pembatalan (misal "payment_timeout", "payment_failed").

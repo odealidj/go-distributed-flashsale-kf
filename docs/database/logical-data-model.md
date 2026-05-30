@@ -1,119 +1,130 @@
-# Logical Data Model (Flash Sale Microservices)
+# Logical Data Model (Flash Sale — Scaffold)
 
-Dokumen ini mendefinisikan skema tabel *PostgreSQL* untuk masing-masing *microservice*. Karena kita menganut *Database per Service*, tabel-tabel ini terpisah ke dalam 4 *logical database* yang berbeda dan **TIDAK BOLEH** di-*JOIN* secara langsung melalui SQL.
+Dokumen ini mendefinisikan skema tabel *PostgreSQL* untuk proyek *scaffold/demo* Flash Sale.
+
+> **Catatan:** Pada versi scaffold ini, semua tabel berada dalam **satu database tunggal** bernama `flashsale`. File `init.sql` di-*mount* langsung ke kontainer PostgreSQL saat `docker-compose up`. Di arsitektur *production* yang sesungguhnya, setiap *microservice* idealnya memiliki database terpisah (*Database per Service*) dan tabel-tabel **TIDAK BOLEH** di-*JOIN* langsung via SQL lintas *service*.
 
 ---
 
 ## Standar Kolom Audit & Optimistic Locking (Best Practice Production)
-Sesuai standar industri skala besar, setiap tabel utama wajib memiliki 4 kolom ini:
-1. `created_at` (TIMESTAMP): Waktu *record* dibuat.
-2. `updated_at` (TIMESTAMP): Waktu *record* terakhir diubah.
-3. `created_by` / `updated_by` (VARCHAR): Berisi **user_id** (jika aksi dipicu oleh pelanggan/admin) ATAU **nama_service** (misal: `system-order-saga` jika diubah otomatis oleh *background job/Kafka*). Ini sangat penting di *production* untuk mengetahui *siapa* atau *sistem apa* yang terakhir menyentuh data tersebut.
-4. `version` (INT): Digunakan untuk *Optimistic Concurrency Control*. Setiap ada klausa `UPDATE`, kode kita harus mengecek `WHERE id=? AND version=?`, lalu menaikkan `version = version + 1`. Jika *affected_rows = 0*, berarti ada sistem lain yang mengubah data di detik yang sama, dan transaksi kita digagalkan.
+
+Sesuai standar industri skala besar, setiap tabel utama sebaiknya memiliki kolom audit berikut:
+
+1. `created_at` (TIMESTAMPTZ): Waktu *record* dibuat.
+2. `updated_at` (TIMESTAMPTZ): Waktu *record* terakhir diubah.
+3. `created_by` / `updated_by` (VARCHAR): Berisi **user_id** (jika aksi dipicu oleh pelanggan/admin) ATAU **nama_service** (misal: `system-kafka-consumer`).
+4. `version` (INT): Digunakan untuk *Optimistic Concurrency Control*. Setiap `UPDATE` harus mengecek `WHERE id=? AND version=?`, lalu menaikkan `version = version + 1`.
+
+> **Catatan Scaffold:** Versi scaffold ini menggunakan pola audit yang disederhanakan. Tidak semua tabel memiliki keempat kolom di atas — hanya yang relevan saja yang diterapkan (misal: tabel `payments` hanya punya `created_at`). Di production, lengkapi sesuai kebutuhan.
 
 ---
 
-## 1. Database: `db_product`
+## 1. Tabel `products`
 
-Digunakan oleh *Product Service*.
+Menyimpan data produk yang dijual pada Flash Sale.
 
-### Tabel `products`
 | Kolom | Tipe Data | Constraint | Keterangan |
 | :--- | :--- | :--- | :--- |
-| `id` | VARCHAR(50) | PK | Format: `prod_<UUID>` |
+| `id` | VARCHAR(50) | PK | Format: `prod_<id>` |
 | `name` | VARCHAR(255) | NOT NULL | Nama produk |
 | `original_price` | BIGINT | NOT NULL | Harga normal |
-| `flashsale_price` | BIGINT | NOT NULL | Harga coret / diskon |
-| `created_at` | TIMESTAMP | NOT NULL | |
-| `updated_at` | TIMESTAMP | NOT NULL | |
-| `updated_by` | VARCHAR(50) | | ID Admin yang mengubah |
-| `version` | INT | NOT NULL DEFAULT 1| Optimistic lock |
+| `flash_sale_price` | BIGINT | NOT NULL | Harga Flash Sale (diskon) |
+| `created_at` | TIMESTAMPTZ | DEFAULT CURRENT_TIMESTAMP | |
+| `updated_at` | TIMESTAMPTZ | DEFAULT CURRENT_TIMESTAMP | |
+| `updated_by` | VARCHAR(100) | | ID admin/sistem yang mengubah |
+| `version` | INTEGER | DEFAULT 1 | Optimistic lock |
 
 ---
 
-## 2. Database: `db_inventory`
+## 2. Tabel `inventories`
 
-Digunakan oleh *Inventory Service*. Sangat kritikal.
+Menyimpan data stok produk. Stok utama saat Flash Sale hidup di Redis; tabel ini berfungsi sebagai *backup* persisten.
 
-### Tabel `inventories`
 | Kolom | Tipe Data | Constraint | Keterangan |
 | :--- | :--- | :--- | :--- |
-| `product_id` | VARCHAR(50) | PK | Merujuk ke ID dari db_product |
-| `total_stock` | INT | NOT NULL | Total barang fisik di gudang |
-| `available_stock`| INT | NOT NULL, >=0 | Stok yang masih bisa dibeli |
-| `reserved_stock` | INT | NOT NULL, >=0 | Stok yang sedang dipegang di dalam *Cart / Pending Order* |
-| `created_at` | TIMESTAMP | NOT NULL | |
-| `updated_at` | TIMESTAMP | NOT NULL | |
-| `updated_by` | VARCHAR(50) | | Misal: `system-kafka-consumer` |
-| `version` | INT | NOT NULL DEFAULT 1| Optimistic lock |
-
-*(Catatan: Stok utama hidup di RAM/Redis. Tabel ini adalah *backup* persisten yang disinkronkan secara asinkron dari Redis).*
+| `product_id` | VARCHAR(50) | PK | Merujuk ke `products.id` |
+| `stock` | BIGINT | NOT NULL | Jumlah stok tersedia |
+| `updated_at` | TIMESTAMPTZ | DEFAULT CURRENT_TIMESTAMP | |
+| `updated_by` | VARCHAR(100) | | Misal: `system` |
+| `version` | INTEGER | DEFAULT 1 | Optimistic lock |
 
 ---
 
-## 3. Database: `db_order`
+## 3. Tabel `orders`
 
-Digunakan oleh *Order Service*. Menyimpan *state machine* Saga.
+Menyimpan pesanan yang dibuat oleh *Order Service* melalui alur Saga.
 
-### Tabel `orders`
 | Kolom | Tipe Data | Constraint | Keterangan |
 | :--- | :--- | :--- | :--- |
-| `id` | VARCHAR(50) | PK | Format: `ord_<UUID>` |
-| `user_id` | VARCHAR(50) | NOT NULL | Pembeli |
-| `status` | VARCHAR(20) | NOT NULL | `PENDING_PAYMENT`, `PAID`, `CANCELLED` |
-| `total_amount` | BIGINT | NOT NULL | |
-| `created_at` | TIMESTAMP | NOT NULL | |
-| `updated_at` | TIMESTAMP | NOT NULL | |
-| `updated_by` | VARCHAR(50) | | `usr_999` atau `order-saga-timeout` |
-| `version` | INT | NOT NULL DEFAULT 1| Optimistic lock |
-
-### Tabel `order_items`
-| Kolom | Tipe Data | Constraint | Keterangan |
-| :--- | :--- | :--- | :--- |
-| `id` | VARCHAR(50) | PK | |
-| `order_id` | VARCHAR(50) | FK -> orders.id | |
-| `product_id` | VARCHAR(50) | NOT NULL | |
-| `qty` | INT | NOT NULL | Saat Flash Sale biasanya bernilai 1 |
-| `price` | BIGINT | NOT NULL | Snapshot harga saat transaksi |
+| `id` | VARCHAR(50) | PK | Format: UUID |
+| `user_id` | VARCHAR(50) | NOT NULL | ID pembeli |
+| `product_id` | VARCHAR(50) | NOT NULL | ID produk yang dibeli |
+| `quantity` | INTEGER | NOT NULL | Jumlah item |
+| `total_amount` | BIGINT | NOT NULL | Total harga |
+| `status` | VARCHAR(50) | NOT NULL, DEFAULT `'PENDING'` | `PENDING`, `PAID`, `CANCELLED` |
+| `created_at` | TIMESTAMPTZ | DEFAULT CURRENT_TIMESTAMP | |
+| `updated_at` | TIMESTAMPTZ | DEFAULT CURRENT_TIMESTAMP | |
 
 ---
 
-## 4. Database: `db_payment`
+## 4. Tabel `payments`
 
-Digunakan oleh *Payment Service*.
+Menyimpan hasil pembayaran yang diproses oleh *Payment Service*.
 
-### Tabel `payments`
 | Kolom | Tipe Data | Constraint | Keterangan |
 | :--- | :--- | :--- | :--- |
-| `id` | VARCHAR(50) | PK | Format: `pay_<UUID>` |
-| `order_id` | VARCHAR(50) | NOT NULL, UNIQUE | |
-| `user_id` | VARCHAR(50) | NOT NULL | |
-| `amount` | BIGINT | NOT NULL | |
-| `status` | VARCHAR(20) | NOT NULL | `PENDING`, `SUCCESS`, `FAILED` |
-| `created_at` | TIMESTAMP | NOT NULL | |
-| `updated_at` | TIMESTAMP | NOT NULL | |
-| `updated_by` | VARCHAR(50) | | Misal: `midtrans-webhook` |
-| `version` | INT | NOT NULL DEFAULT 1| Optimistic lock |
+| `id` | VARCHAR(50) | PK | Format: UUID |
+| `order_id` | VARCHAR(50) | NOT NULL | ID pesanan terkait |
+| `amount` | BIGINT | NOT NULL | Jumlah pembayaran |
+| `status` | VARCHAR(50) | NOT NULL, DEFAULT `'SUCCESS'` | `SUCCESS`, `FAILED` |
+| `created_at` | TIMESTAMPTZ | DEFAULT CURRENT_TIMESTAMP | |
 
 ---
 
-## 5. Tabel Wajib di Tiap Database: `outbox` & `inbox`
+## 5. Tabel `outbox_messages`
 
-Tabel ini WAJIB ada di `db_inventory`, `db_order`, dan `db_payment` untuk menjamin konsistensi Kafka (*Transactional Outbox Pattern*).
+Digunakan oleh *Transactional Outbox Pattern*. Pesan disisipkan bersamaan dengan transaksi bisnis utama, lalu di-*relay* ke Kafka oleh *background worker*.
 
-### Tabel `outbox_messages` (Pesan yang akan dikirim ke Kafka)
 | Kolom | Tipe Data | Constraint | Keterangan |
 | :--- | :--- | :--- | :--- |
-| `id` | VARCHAR(50) | PK | UUID Pesan |
-| `topic` | VARCHAR(100)| NOT NULL | Tujuan Topik Kafka |
-| `payload` | JSONB | NOT NULL | Isi JSON Pesan |
-| `status` | VARCHAR(20) | NOT NULL | `PENDING`, `PUBLISHED` |
-| `created_at` | TIMESTAMP | NOT NULL | Disisipkan bersamaan dengan transaksi bisnis utama (Terkunci) |
+| `id` | SERIAL | PK | Auto-increment |
+| `aggregate_id` | VARCHAR(255) | NOT NULL | ID entitas terkait (misal: order ID) |
+| `aggregate_type` | VARCHAR(255) | NOT NULL | Tipe entitas (misal: `Order`, `Payment`) |
+| `event_type` | VARCHAR(255) | NOT NULL | Nama event (misal: `StockReservedEvent`) |
+| `payload` | JSONB | NOT NULL | Isi JSON event |
+| `trace_payload` | VARCHAR(512) | | Data *tracing* (OpenTelemetry) |
+| `status` | VARCHAR(50) | NOT NULL, DEFAULT `'PENDING'` | `PENDING`, `PUBLISHED` |
+| `created_at` | TIMESTAMPTZ | DEFAULT CURRENT_TIMESTAMP | Waktu pesan disisipkan |
 
-### Tabel `inbox_messages` (Pesan yang masuk dari Kafka / Idempotency Key)
+---
+
+## 6. Tabel `processed_events`
+
+Digunakan sebagai tabel idempotency. Setiap *event* dari Kafka yang berhasil diproses dicatat di sini agar tidak diproses ulang.
+
 | Kolom | Tipe Data | Constraint | Keterangan |
 | :--- | :--- | :--- | :--- |
-| `id` | VARCHAR(50) | PK | UUID Event dari Kafka (Menjamin *Idempotency*) |
-| `topic` | VARCHAR(100)| NOT NULL | Asal Topik Kafka |
-| `status` | VARCHAR(20) | NOT NULL | `PROCESSED` |
-| `created_at` | TIMESTAMP | NOT NULL | Waktu pesan berhasil dieksekusi |
+| `event_id` | VARCHAR(255) | PK | ID unik event dari Kafka |
+| `processed_at` | TIMESTAMPTZ | DEFAULT CURRENT_TIMESTAMP | Waktu event berhasil diproses |
+
+---
+
+## 7. Data Seed Awal
+
+File `init.sql` menyisipkan data *dummy* untuk keperluan demo/testing:
+
+### Produk (`products`)
+
+| `id` | `name` | `original_price` | `flash_sale_price` | `updated_by` |
+| :--- | :--- | ---: | ---: | :--- |
+| `prod_1` | Sepatu Lari X | 500.000 | 150.000 | `system` |
+| `prod_2` | Tas Ransel Y | 300.000 | 99.000 | `system` |
+
+### Inventori (`inventories`)
+
+| `product_id` | `stock` | `updated_by` |
+| :--- | ---: | :--- |
+| `prod_1` | 100 | `system` |
+| `prod_2` | 50 | `system` |
+
+Insert menggunakan `ON CONFLICT (id/product_id) DO NOTHING` agar aman dijalankan berulang kali.

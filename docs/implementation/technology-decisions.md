@@ -3,7 +3,7 @@
 Dokumen ini mendokumentasikan pustaka (*library*) dan teknologi yang dipilih untuk implementasi proyek Flash Sale, beserta alasan di baliknya.
 
 ## 1. Bahasa & Workspace
-*   **Go (1.22+)**: Dipilih karena kinerja konkurensi (goroutine) yang sangat efisien, konsumsi memori rendah, dan ekosistem *cloud-native* yang kuat. Sangat krusial untuk menahan *load* *Flash Sale*.
+*   **Go (1.21+)**: Dipilih karena kinerja konkurensi (goroutine) yang sangat efisien, konsumsi memori rendah, dan ekosistem *cloud-native* yang kuat. Sangat krusial untuk menahan *load* *Flash Sale*.
 *   **Workspace**: `go.work` (Go Workspaces) digunakan untuk mengatur struktur Monorepo agar setiap service memiliki independensi dependensi tanpa harus memisahkannya ke *repository* git yang berbeda.
 
 ## 2. Microservice Framework & RPC
@@ -35,7 +35,7 @@ Dokumen ini mendokumentasikan pustaka (*library*) dan teknologi yang dipilih unt
     *   **Alasan**: Standar industri modern untuk *distributed tracing*. Jejak *request* dari API Gateway -> Kafka -> Order Service bisa dilacak secara visual menggunakan Jaeger di infrastruktur lokal.
 
 ## 6. Reverse Proxy & API Gateway
-*   **Reverse Proxy**: `Traefik` atau `NGINX` (Ditaruh pada layer paling depan di Docker Compose). Mengurus TLS, *Rate Limiting*, dan pemantauan trafik L7 secara mentah.
+*   **Reverse Proxy**: `NGINX` (Ditaruh pada layer paling depan di Docker Compose). Mengurus *Rate Limiting* dan pemantauan trafik L7.
 *   **API Gateway (BFF)**: Aplikasi Go murni yang bertugas mem-parsing Auth/JWT pengguna, mengagregasi data, dan menjadi tameng sebelum *request* dikirimkan secara internal lewat gRPC ke *backend services*.
 
 ## 7. Resilience (Ketahanan Sistem)
@@ -43,5 +43,5 @@ Dokumen ini mendokumentasikan pustaka (*library*) dan teknologi yang dipilih unt
     *   **Alasan**: Ringan, murni Go (tanpa CGO), tidak ada dependensi eksternal, API sederhana dan idiomatis. Alternatif seperti `afex/hystrix-go` lebih kompleks dan kurang aktif. CB ditempatkan di API Gateway karena dialah yang memanggil semua service downstream.
 *   **Retry Strategy**: Implementasi kustom murni Go (`shared/pkg/resilience/retry.go`)
     *   **Alasan**: Tidak perlu library eksternal untuk logika retry sederhana. Exponential backoff dengan jitter ±30% cukup untuk mencegah thundering herd saat recovery.
-*   **Dead Letter Queue (DLQ)**: Kafka topic `flashsale.order.dlq`
+*   **Dead Letter Queue (DLQ)**: Kafka topic `flashsale.order.dlq` (untuk Order Consumer) dan `flashsale.inventory.dlq` (untuk Inventory Consumer)
     *   **Alasan**: Alternatif (drop atau retry tanpa batas) keduanya buruk untuk produksi. DLQ menjamin event tidak hilang sekaligus tidak memblokir consumer pipeline.

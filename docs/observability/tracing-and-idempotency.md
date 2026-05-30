@@ -9,7 +9,7 @@ Sistem terdistribusi (terutama dengan antrean asinkron Kafka) memiliki tingkat k
 Kita menggunakan standar **OpenTelemetry (OTel)** untuk *tracing*, yang nantinya diekspor ke **Jaeger**.
 
 ### Aliran Trace ID (End-to-End)
-1. **Reverse Proxy (Lapis 1)**: NGINX/Traefik menginjeksi header `X-Request-Id` jika belum ada.
+1. **Reverse Proxy (Lapis 1)**: NGINX menginjeksi header `X-Request-Id` jika belum ada.
 2. **API Gateway (HTTP -> gRPC)**: 
    * Menerima `X-Request-Id`.
    * Memulai *Span* baru dari OTel. OTel secara otomatis membuat `TraceID` (ID keseluruhan transaksi) dan `SpanID` (ID langkah saat ini).
@@ -50,18 +50,18 @@ Klien (Mobile/Web) **DIWAJIBKAN** mengirim HTTP Header `Idempotency-Key: <UUID>`
    * *Inventory* langsung merespons "Sukses" mengembalikan ID Pesanan yang sama, **TANPA** memotong stok lagi.
    * TTL (Time-to-Live) kunci di Redis diset sekitar 24 jam.
 
-### B. Kafka Consumer (Inbox Pattern)
-Untuk *service* yang mendengarkan pesan Kafka (Order & Payment), kita menggunakan pola **Inbox Pattern** untuk mencapai Idempotensi *Exactly-Once Processing* secara logika bisnis.
+### B. Kafka Consumer (Tabel processed_events)
+Untuk *service* yang mendengarkan pesan Kafka (Order & Inventory), kita menggunakan tabel **`processed_events`** untuk mencapai Idempotensi *Exactly-Once Processing* secara logika bisnis.
 
 Setiap *event* Kafka (*JSON Payload*) memiliki `event_id` yang unik (UUID).
 
 **Alur Konsumsi Pesan di Service Tujuan (Contoh di Order Service):**
 1. Menerima *Event* `PaymentCompleted` (event_id: `evt_999`).
 2. Membuka koneksi Transaksi SQL ( `BEGIN;` ).
-3. Mencoba menyimpan `evt_999` ke dalam tabel `inbox_messages`:
+3. Mencoba menyimpan `evt_999` ke dalam tabel `processed_events`:
    ```sql
-   INSERT INTO inbox_messages (id, event_type, payload, status, created_at)
-   VALUES ('evt_999', 'PaymentCompleted', '...', 'PROCESSED', NOW());
+   INSERT INTO processed_events (event_id, processed_at)
+   VALUES ('evt_999', NOW());
    ```
 4. **Jika INSERT GAGAL** karena melanggar *Primary Key Constraint* (artinya ID ini sudah pernah diproses):
    * *Rollback* transaksi.

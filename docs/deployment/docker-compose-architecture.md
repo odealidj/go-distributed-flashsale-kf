@@ -1,35 +1,38 @@
 # Arsitektur Docker Compose (Local & Demo)
 
 ## 1. Tujuan
-Dokumen ini merancang topologi jaringan lokal (*Docker Compose*) untuk menjalankan seluruh 5 *microservices*, *Reverse Proxy*, dan infrastruktur pendukung dalam satu perintah `docker-compose up`. Ini sangat berguna untuk pengembangan (*local development*) dan presentasi demo proyek.
+Dokumen ini merancang topologi jaringan lokal (*Docker Compose*) untuk menjalankan infrastruktur pendukung dalam satu perintah `docker-compose up`. Ini sangat berguna untuk pengembangan (*local development*) dan presentasi demo proyek. 
+
+**Penting:** Aplikasi Go (Microservices) **TIDAK** dijalankan di dalam Docker Compose. Mereka dijalankan langsung di mesin *host* via `go run` (di-orkestrasi melalui `Makefile`) agar mudah di-debug.
 
 ## 2. Topologi Jaringan & Komponen
 
-Semua komponen akan tergabung dalam satu Docker *bridge network* internal bernama `flashsale_net`. Hanya *Reverse Proxy* dan *port* infrastruktur tertentu yang diekspos ke mesin *host* (laptop Anda).
+Semua komponen infrastruktur tergabung dalam satu Docker *bridge network* internal bernama `flashsale-network`.
 
 ```text
 [Browser / K6] 
-      │ (Port 80 / 443)
+      │ (Port 80)
       ▼
 +---------------------+
-|   Reverse Proxy     | (Traefik / NGINX) - Mengurus SSL, Rate Limiting
+|   Reverse Proxy     | (NGINX) - Mengurus Rate Limiting
 +---------------------+
       │ (Rute /api/v1/*)
       ▼
-+---------------------+
-|    API Gateway      | (BFF Go) - Validasi Auth, Agregasi, Transform HTTP -> gRPC
-+---------------------+
++-------------------------------------------------------------+
+|    API Gateway (Go Process di Host - Port 8000)             |
++-------------------------------------------------------------+
       │ 
       ├───────────────── (gRPC) ────────────────┐
       ▼                                         ▼
 +---------------------+                   +---------------------+
 |  Inventory Service  |                   |   Product Service   | 
+|  (Host Port: 9002)  |                   |  (Host Port: 9001)  |
 +---------------------+                   +---------------------+
       │                                         │
       │ (Lua Script Atomic)                     │ (Read Cache)
       ▼                                         ▼
 +---------------------------------------------------------------+
-|                      REDIS CACHE                              | (Port 6379 - Exposed for debug)
+|                      REDIS CACHE                              | (Port 6379)
 +---------------------------------------------------------------+
       
       [Sistem Asinkron & Database di Bawah Layar]
@@ -38,49 +41,46 @@ Semua komponen akan tergabung dalam satu Docker *bridge network* internal bernam
       │
       ▼
 +---------------------------------------------------------------+
-|                      APACHE KAFKA                             | (Port 9092) -> [Kafka UI: 8080]
+|                      APACHE KAFKA                             | (Port 9092, 9094) -> [Kafka UI: 8080]
 +---------------------------------------------------------------+
       │ (Consume)                               │ (Consume)
       ▼                                         ▼
 +---------------------+                   +---------------------+
 |   Order Service     |                   |   Payment Service   | 
+| (Host, no gRPC port)|                   |  (Host Port: 9003)  |
 +---------------------+                   +---------------------+
 
 +---------------------------------------------------------------+
-|                      POSTGRESQL                               | (Port 5432 - Exposed for DataGrip/DBeaver)
+|                      POSTGRESQL                               | (Port 5432)
 +---------------------------------------------------------------+
-(Setiap service punya logical database sendiri: db_order, db_inventory, dll)
+(Satu database `flashsale` digunakan bersama-sama untuk scaffold)
 ```
 
-## 3. Daftar Service Docker
+## 3. Daftar Service Docker (Infrastruktur)
 
 | Container Name | Port Eksternal (Host) | Peran |
 | :--- | :--- | :--- |
-| `reverse-proxy` | `80`, `443` | NGINX / Traefik. Pintu masuk tunggal dunia luar. |
-| `api-gateway` | *(Internal 8080)* | BFF untuk *frontend*. |
-| `inventory-service` | *(Internal 9000)* | gRPC Server, mengatur stok di Redis. |
-| `order-service` | *(Internal 9001)* | Kafka Consumer, mengelola saga transaksi. |
-| `payment-service` | *(Internal 9002)* | gRPC Server untuk webhook bank / proses pembayaran. |
-| `product-service` | *(Internal 9003)* | gRPC Server untuk katalog. |
-| `postgres` | `5432` | RDBMS utama. |
+| `nginx` | `80` | Reverse Proxy masuk untuk API. |
+| `postgres` | `5432` | RDBMS utama (menggunakan `init.sql`). |
 | `redis` | `6379` | *In-memory store* untuk *Atomic Counters* (Stok) & Cache. |
-| `kafka` | `9092` | *Message Broker* utama. |
-| `kafka-ui` | `8080` | Web UI (Prove/Kafka-UI) untuk melihat isi *topic* dan *messages*. |
-| `jaeger` | `16686` | Web UI untuk melihat visualisasi *Distributed Tracing*. |
-| `otel-collector` | *(Internal 4317)* | Penerima *trace* gRPC dari aplikasi Go sebelum dikirim ke Jaeger. |
+| `kafka` | `9092`, `9094` | *Message Broker* utama. |
+| `kafka-ui` | `8080` | Web UI untuk melihat isi *topic* dan *messages*. |
+| `jaeger` | `16686`, `4317`, `4318` | Tracing backend + UI (Menerima OTLP via 4317). |
+
+*(Tidak ada container untuk otel-collector, Jaeger langsung menangani OTLP)*.
 
 ## 4. Cara Menjalankan
 
 Melalui *Makefile* di Root:
 
-1. **Jalankan Infrastruktur Saja (Untuk *Development* di Terminal)**
+1. **Jalankan Infrastruktur Docker**
    ```bash
    make infra-up
    ```
-   *(Hanya menyalakan Postgres, Redis, Kafka, Jaeger, Otel). Aplikasi Go dijalankan manual lewat terminal IDE agar mudah di-debug.*
+   *(Hanya menyalakan Nginx, Postgres, Redis, Kafka, Jaeger).*
 
-2. **Jalankan Semuanya (Mode Demo / K6 Load Test)**
+2. **Jalankan Semua Aplikasi (Microservices)**
    ```bash
-   make demo-up
+   make up
    ```
-   *(Membangun image Go dan menjalankan semua 12 kontainer sekaligus).*
+   *(Menjalankan semua aplikasi Go secara paralel menggunakan script `run_all.sh` atau Makefile command di host).*

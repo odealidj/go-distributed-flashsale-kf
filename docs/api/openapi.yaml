@@ -2,107 +2,87 @@ openapi: 3.0.3
 info:
   title: Flash Sale API Gateway
   version: 1.0.0
-  description: Public REST API for Client/Mobile App to interact with the Flash Sale system.
+  description: >
+    REST API publik untuk Client/Mobile App berinteraksi dengan sistem Flash Sale.
+    API Gateway dibangun menggunakan Go Kratos HTTP dan berjalan di port :8000.
+    Semua request dari luar masuk melalui NGINX reverse proxy (port 80)
+    yang mem-proxy ke API Gateway.
 
 paths:
-  /api/v1/flashsale/products:
+  /api/v1/products:
     get:
       summary: Mendapatkan daftar produk flash sale dan sisa stok
       operationId: GetProducts
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+          required: false
+          description: Nomor halaman untuk paginasi.
+        - in: query
+          name: per_page
+          schema:
+            type: integer
+          required: false
+          description: Jumlah item per halaman.
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    product_id: { type: string }
-                    name: { type: string }
-                    remaining_stock: { type: integer }
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        product_id: { type: string }
+                        name: { type: string }
+                        remaining_stock: { type: integer }
 
-  /api/v1/flashsale/checkout:
+  /api/v1/checkout:
     post:
       summary: Memulai proses checkout (reserve stock)
       operationId: CheckoutFlashSale
       security:
         - BearerAuth: []
-      parameters:
-        - in: header
-          name: X-Idempotency-Key
-          schema:
-            type: string
-            format: uuid
-          required: true
-          description: UUID unik untuk mencegah checkout ganda oleh device lambat.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [product_id, qty]
+              required: [product_id]
               properties:
                 product_id:
                   type: string
                   example: "PROD-99"
-                qty:
-                  type: integer
-                  example: 1
       responses:
         '202':
-          description: "Accepted. Stok berhasil di-reserve di Redis, pesanan sedang diproses asinkron."
+          description: "Accepted. Stok berhasil di-reserve di Redis, pesanan sedang diproses asinkron via Saga."
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  message:
-                    type: string
-                    example: "Pesanan sedang diproses."
-                  order_id:
-                    type: string
-                    description: "Order ID sementara untuk dilakukan polling."
+                  meta:
+                    $ref: '#/components/schemas/Meta'
         '400':
-          description: Bad Request (Format salah, qty melebihi batas).
+          description: Bad Request (format JSON tidak valid).
         '401':
-          description: Unauthorized (Token tidak valid).
+          description: Unauthorized (token tidak ada atau tidak valid).
         '409':
-          description: Conflict (Stok Habis / User sudah membeli).
+          description: Conflict (stok habis atau sedang diproses).
 
-  /api/v1/flashsale/orders/{order_id}:
-    get:
-      summary: Mendapatkan status pesanan (Polling)
-      operationId: GetOrder
-      security:
-        - BearerAuth: []
-      parameters:
-        - in: path
-          name: order_id
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  order_id: { type: string }
-                  status: { type: string, example: "PENDING_PAYMENT" }
-                  total_amount: { type: number }
-        '404':
-          description: Pesanan belum ada di database (Saga belum selesai membuat draft).
-
-  /api/v1/flashsale/pay:
+  /api/v1/pay:
     post:
-      summary: Mock Pembayaran
-      operationId: MockPayment
+      summary: Memproses pembayaran (mock payment)
+      operationId: ProcessPayment
       security:
         - BearerAuth: []
       requestBody:
@@ -116,7 +96,8 @@ paths:
                 order_id:
                   type: string
                 amount:
-                  type: number
+                  type: integer
+                  format: int64
       responses:
         '200':
           description: Pembayaran berhasil diproses
@@ -125,10 +106,33 @@ paths:
               schema:
                 type: object
                 properties:
-                  success: { type: boolean }
-                  message: { type: string }
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        '500':
+          description: Pembayaran gagal.
 
 components:
+  schemas:
+    Meta:
+      type: object
+      description: Format respons standar sesuai response-standard.md
+      properties:
+        trace_id:
+          type: string
+          description: OpenTelemetry Trace ID untuk distributed tracing.
+        message:
+          type: string
+          example: "success"
+        event_id:
+          type: string
+          description: Event ID dari Outbox, digunakan sebagai referensi tracking Saga.
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+
   securitySchemes:
     BearerAuth:
       type: http
